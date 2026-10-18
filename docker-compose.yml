@@ -1,0 +1,37 @@
+# Local stack: PostgreSQL, the API and the web app (http://localhost:8080).
+# Reads secrets from .env (copy .env.example). SMARTTT runs separately.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: allocator
+      POSTGRES_USER: allocator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U allocator -d allocator"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://allocator:${POSTGRES_PASSWORD}@db:5432/allocator
+      FORWARDED_ALLOW_IPS: "*"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+
+volumes:
+  db-data:
