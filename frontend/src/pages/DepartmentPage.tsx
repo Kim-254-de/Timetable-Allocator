@@ -22,7 +22,13 @@ const STATE_STYLE: Record<SectionState, string> = {
   conflict: 'bg-red-100 text-red-800',
 }
 
-type Filter = 'all' | 'todo' | 'servicing'
+type Filter = 'all' | 'todo' | 'attention' | 'servicing'
+
+const ATTENTION_LABEL: Record<Section['attention'][number], string> = {
+  time_or_room_changed: 'Time or room changed since allocation',
+  lecturer_cleared: 'Lecturer no longer on this class',
+  lecturer_changed: 'Lecturer changed outside the Allocator',
+}
 
 export function DepartmentPage() {
   const departmentId = Number(useParams().departmentId)
@@ -60,6 +66,7 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
     return (board.data?.sections ?? []).filter((s) => {
       if (filter === 'todo' && s.state === 'allocated') return false
       if (filter === 'servicing' && !s.servicing) return false
+      if (filter === 'attention' && s.attention.length === 0) return false
       return !q || s.code.toLowerCase().includes(q) || s.unit.name.toLowerCase().includes(q)
         || (s.lecturer?.full_name.toLowerCase().includes(q) ?? false)
     })
@@ -78,6 +85,9 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
           <p className="text-lg font-semibold">
             {summary.allocated} of {summary.sections} classes allocated
             {summary.conflicts > 0 && <span className="ml-2 text-sm text-red-700">{summary.conflicts} conflicts</span>}
+            {(summary.needs_attention ?? 0) > 0 && (
+              <span className="ml-2 text-sm text-amber-800">{summary.needs_attention} changed by the new timetable</span>
+            )}
           </p>
           <p className="text-sm text-slate-600">
             {submission?.is_current
@@ -106,10 +116,10 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
       </section>
 
       <div className="flex flex-wrap items-center gap-2">
-        {(['all', 'todo', 'servicing'] as const).map((f) => (
+        {(['all', 'todo', 'attention', 'servicing'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)}
             className={clsx('rounded-full px-3 py-1 text-sm', filter === f ? 'bg-emerald-700 text-white' : 'bg-white border border-slate-200')}>
-            {f === 'all' ? 'All' : f === 'todo' ? 'Still to allocate' : 'Servicing'}
+            {f === 'all' ? 'All' : f === 'todo' ? 'Still to allocate' : f === 'attention' ? 'Changed' : 'Servicing'}
           </button>
         ))}
         <input type="search" placeholder="Search code, title or lecturer" value={query}
@@ -153,6 +163,9 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
                 </td>
                 <td className="px-3 py-2">
                   <span className={clsx('rounded px-2 py-0.5 text-xs font-medium', STATE_STYLE[s.state])}>{STATE_LABEL[s.state]}</span>
+                  {s.attention.map((a) => (
+                    <span key={a} className="mt-1 block text-xs text-amber-800">{ATTENTION_LABEL[a]}</span>
+                  ))}
                 </td>
               </tr>
             ))}

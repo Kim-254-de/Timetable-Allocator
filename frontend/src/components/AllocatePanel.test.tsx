@@ -17,7 +17,7 @@ const section: Section = {
     year_of_study: 1, study_semester: 1, stream: '' }],
   meetings: [{ day_of_week: 'TUE', start_time: '10:00', end_time: '12:00', room: { id: 'r', code: 'STB 1', capacity: 150 }, session_key: null }],
   weekly_hours: 2, registered_students: 148, lecturer: null, lecturer_conflict: false, lecturer_name_text: '',
-  state: 'outstanding', servicing: true, allocation: null,
+  state: 'outstanding', servicing: true, allocation: null, attention: [],
 }
 
 const candidate = (l: Lecturer, extra: Partial<Candidate> = {}): Candidate => ({

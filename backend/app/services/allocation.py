@@ -103,6 +103,38 @@ def allocation_dict(row: Allocation | None) -> dict[str, Any] | None:
     }
 
 
+def meeting_signature(section: dict[str, Any]) -> list[dict[str, str]]:
+    return sorted(
+        (
+            {
+                "day_of_week": m["day_of_week"],
+                "start_time": m["start_time"],
+                "end_time": m["end_time"],
+                "room": m["room"]["code"],
+            }
+            for m in section["meetings"]
+        ),
+        key=lambda m: (m["day_of_week"], m["start_time"], m["room"]),
+    )
+
+
+def attention(section: dict[str, Any], row: Allocation | None) -> list[str]:
+    """
+    Why an allocated class needs another look after a new timetable version:
+    its time or room changed since the lecturer was given it, or the lecturer
+    the department chose is no longer on it.
+    """
+    if row is None or row.smarttt_lecturer_id is None:
+        return []
+    reasons = []
+    current = (section.get("lecturer") or {}).get("id")
+    if current != row.smarttt_lecturer_id:
+        reasons.append("lecturer_changed" if current else "lecturer_cleared")
+    if row.meetings_at_allocation is not None and row.meetings_at_allocation != meeting_signature(section):
+        reasons.append("time_or_room_changed")
+    return reasons
+
+
 def section_state(section: dict[str, Any]) -> str:
     if section.get("lecturer_conflict"):
         return "conflict"
@@ -166,6 +198,7 @@ def department_board(
                     for row in section["class_rows"]
                 ),
                 "allocation": allocation_dict(local.get(section["key"])),
+                "attention": attention(section, local.get(section["key"])),
             }
         )
     db.commit()
@@ -189,6 +222,7 @@ def _summary(sections: list[dict[str, Any]]) -> dict[str, int]:
         "allocated": states.count("allocated"),
         "outstanding": states.count("outstanding") + states.count("unmatched"),
         "conflicts": states.count("conflict"),
+        "needs_attention": sum(1 for s in sections if s.get("attention")),
     }
 
 
@@ -377,6 +411,7 @@ def set_allocation(
     row.entered_at = utcnow()
     row.synced_to_smarttt_at = utcnow()
     row.status = AllocationStatus.SAVED
+    row.meetings_at_allocation = meeting_signature(saved) if lecturer_id else None
     db.flush()
     after = allocation_dict(row)
     audit(db, identity, "allocation.set", "section", f"{term.smarttt_term_id}:{key}", before, after)

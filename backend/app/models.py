@@ -89,6 +89,9 @@ class Allocation(Base):
         Enum(AllocationStatus, name="allocation_status", values_callable=lambda e: [m.value for m in e]),
         default=AllocationStatus.SAVED,
     )
+    # The class's meetings (day, start, end, room) when the lecturer was given
+    # it, so a later timetable version that moves the class is flagged.
+    meetings_at_allocation: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
 
     term: Mapped[Term] = relationship()
 

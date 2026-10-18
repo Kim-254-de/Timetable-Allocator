@@ -254,3 +254,27 @@ def test_department_lecturers_with_load_and_availability(client, smarttt):
     assert jane["classes"] == ["COSC 103 GR A"]
     assert jane["unavailable"][0]["day_of_week"] == "MON"
     assert {lec["id"] for lec in body["lecturers"]} == {JANE, COLLINS}
+
+
+def test_repair_publish_flags_moved_and_cleared_classes(client, smarttt):
+    sign_in(client, "STF/0100")
+    _put(client, "412-GRA", JANE)
+    _put(client, "500-MAIN", COLLINS)
+    board = client.get(f"/api/departments/{CS}/sessions").json()["data"]
+    assert board["summary"]["needs_attention"] == 0
+
+    # A new timetable version moves GR A to another room, and the lecturer on
+    # COSC 200 is gone (e.g. that class was removed and re-added).
+    smarttt.sections["412-GRA"]["meetings"][0]["room"] = {"id": "STB 9", "code": "STB 9", "capacity": 150}
+    smarttt.allocate("500-MAIN", None)
+    smarttt.calls.clear()
+    board = client.get(f"/api/departments/{CS}/sessions").json()["data"]
+    by_code = {s["code"]: s for s in board["sections"]}
+    assert by_code["COSC 103 GR A"]["attention"] == ["time_or_room_changed"]
+    assert by_code["COSC 200"]["attention"] == ["lecturer_cleared"]
+    assert board["summary"]["needs_attention"] == 2
+
+    # Re-confirming the lecturer at the new time clears the flag.
+    _put(client, "412-GRA", JANE, expected=JANE)
+    board = client.get(f"/api/departments/{CS}/sessions").json()["data"]
+    assert {s["code"]: s["attention"] for s in board["sections"]}["COSC 103 GR A"] == []

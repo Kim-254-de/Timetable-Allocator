@@ -88,6 +88,8 @@ export interface Section {
   state: SectionState
   servicing: boolean
   allocation: AllocationMeta | null
+  /** Set after a new timetable version: the class moved, or its lecturer is no longer on it. */
+  attention: ('time_or_room_changed' | 'lecturer_cleared' | 'lecturer_changed')[]
 }
 
 export interface Submission {
@@ -104,6 +106,7 @@ export interface Summary {
   allocated: number
   outstanding: number
   conflicts: number
+  needs_attention?: number
 }
 
 export interface Board {
