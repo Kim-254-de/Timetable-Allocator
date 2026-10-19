@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # most this long. Every write re-reads before checking.
     smarttt_cache_seconds: int = Field(default=60, ge=0, le=60)
 
+    # The Timetable Generator: where each term's units, groups and published
+    # meetings come from for the allocation form. GENERATOR_API_KEY must equal
+    # ALLOCATOR_API_KEY in the Generator.
+    generator_base_url: str = "http://localhost:8001"
+    generator_api_key: str = ""
+    generator_timeout_seconds: float = 15.0
+
     # Sign-in sessions: an opaque random token in an httpOnly cookie, stored hashed.
     session_cookie_name: str = "ta_session"
     csrf_cookie_name: str = "XSRF-TOKEN"

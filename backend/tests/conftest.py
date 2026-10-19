@@ -8,13 +8,16 @@ import pytest
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("SMARTTT_API_KEY", "test-allocator-key")
+os.environ.setdefault("GENERATOR_API_KEY", "test-generator-key")
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.clients.generator import GeneratorClient, set_generator
 from app.clients.smarttt import SmartttClient, set_smarttt
 from app.config import get_settings
 from app.db import Base, get_engine, get_sessionmaker
+from tests.fake_generator import FakeGenerator
 from tests.fake_smarttt import FakeSmarttt
 
 
@@ -39,6 +42,16 @@ def smarttt() -> Iterator[FakeSmarttt]:
     set_smarttt(client)
     yield fake
     set_smarttt(None)
+    client.close()
+
+
+@pytest.fixture
+def generator() -> Iterator[FakeGenerator]:
+    fake = FakeGenerator()
+    client = GeneratorClient(get_settings(), transport=fake.transport())
+    set_generator(client)
+    yield fake
+    set_generator(None)
     client.close()
 
 

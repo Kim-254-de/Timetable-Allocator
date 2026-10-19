@@ -8,19 +8,30 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.schemas import SECTION_KEY, AllocationBody, AvailabilityBody, LoginBody
+from app.api.schemas import (
+    SECTION_KEY,
+    AllocationBody,
+    AvailabilityBody,
+    BulkBody,
+    FormEntryBody,
+    LecturerBody,
+    LecturerPatch,
+    LoginBody,
+)
 from app.auth import Identity, current_identity, sign_in, sign_out
+from app.clients.generator import GeneratorClient, get_generator
 from app.clients.smarttt import SmartttClient, get_smarttt
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import ApiError, ok
-from app.services import allocation, availability, export
+from app.services import allocation, availability, export, form, form_export
 
 router = APIRouter()
 
 Db = Annotated[Session, Depends(get_db)]
 Smarttt = Annotated[SmartttClient, Depends(get_smarttt)]
 Me = Annotated[Identity, Depends(current_identity)]
+Generator = Annotated[GeneratorClient, Depends(get_generator)]
 Cfg = Annotated[Settings, Depends(get_settings)]
 TermParam = Annotated[str | None, Query(alias="term", max_length=64)]
 SectionKey = Annotated[str, Path(pattern=SECTION_KEY, max_length=64)]
@@ -182,3 +193,149 @@ def put_availability(
 @router.get("/progress")
 def progress(identity: Me, db: Db, smarttt: Smarttt, term: TermParam = None) -> dict[str, Any]:
     return ok(allocation.all_progress(db, smarttt, identity, term))
+
+
+# -- the allocation form (units and groups from the Timetable Generator) --------------------
+
+DeptCode = Annotated[str, Path(pattern=r"^[A-Za-z0-9 ._-]{1,32}$")]
+EntryId = Annotated[str, Path(pattern=r"^[0-9a-fA-F-]{32,36}$")]
+
+
+@router.get("/generator/terms")
+def generator_terms(_identity: Me, generator: Generator) -> dict[str, Any]:
+    return ok(generator.terms())
+
+
+@router.get("/form/progress")
+def form_progress(identity: Me, db: Db, generator: Generator, term: TermParam = None) -> dict[str, Any]:
+    return ok(form.progress(db, generator, identity, term))
+
+
+@router.get("/form/{department}")
+def form_board(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(form.board(db, generator, identity, department, term))
+
+
+@router.put("/form/{department}/entries")
+def form_save(
+    department: DeptCode,
+    body: FormEntryBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    return ok(form.save_entry(db, generator, identity, department, term, body.model_dump(exclude_unset=True)))
+
+
+@router.post("/form/{department}/entries/bulk")
+def form_bulk(
+    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows))
+
+
+@router.delete("/form/{department}/entries/{entry_id}")
+def form_delete(
+    department: DeptCode,
+    entry_id: EntryId,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    form.delete_entry(db, generator, identity, department, term, entry_id)
+    return ok(None)
+
+
+@router.post("/form/{department}/submit")
+def form_submit(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(form.submit(db, generator, identity, department, term))
+
+
+@router.post("/form/{department}/reopen")
+def form_reopen(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(form.reopen(db, generator, identity, department, term))
+
+
+@router.get("/form/{department}/export.{fmt}")
+def form_export_file(
+    department: DeptCode,
+    fmt: Literal["pdf", "docx", "xlsx"],
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    term: TermParam = None,
+) -> Response:
+    board = form.board(db, generator, identity, department, term)
+    submitted = board["submission"]["submitted_by"] if board["submission"] else identity.actor
+    content = form_export.BUILDERS[fmt](form_export.layout(board, submitted.split(" (")[0]))
+    name = "".join(ch if ch.isalnum() else "-" for ch in str(board["term"].get("name") or "term")).strip("-")
+    filename = f"allocation-{form.compact(board['department']['code'])}-{name}.{fmt}"
+    return Response(
+        content,
+        media_type=form_export.MEDIA[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# -- each department's own lecturers ---------------------------------------------------------
+
+
+@router.get("/form/{department}/lecturers")
+def form_lecturers(department: DeptCode, identity: Me, db: Db, generator: Generator) -> dict[str, Any]:
+    ctx = form.context(generator, identity, department, None)
+    show = ctx.role is not None or identity.timetabling_office
+    return ok(
+        [form.lecturer_dict(lec, show) for lec in form.department_lecturers(db, form.compact(department))]
+    )
+
+
+@router.post("/form/{department}/lecturers")
+def form_add_lecturer(
+    department: DeptCode, body: LecturerBody, identity: Me, db: Db, generator: Generator
+) -> dict[str, Any]:
+    ctx = form.context(generator, identity, department, None)
+    return ok(form.lecturer_dict(form.create_lecturer(db, identity, ctx, body.model_dump())))
+
+
+@router.post("/form/{department}/lecturers/bulk")
+def form_bulk_lecturers(
+    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator
+) -> dict[str, Any]:
+    return ok(form.bulk_lecturers(db, generator, identity, department, body.rows))
+
+
+@router.patch("/form/{department}/lecturers/{lecturer_id}")
+def form_update_lecturer(
+    department: DeptCode,
+    lecturer_id: LecturerId,
+    body: LecturerPatch,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+) -> dict[str, Any]:
+    ctx = form.context(generator, identity, department, None)
+    lecturer = form.get_lecturer(db, lecturer_id)
+    form.lecturer_ctx_check(lecturer, ctx)
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get("max_weekly_hours") == 0:
+        fields["max_weekly_hours"] = None
+    return ok(form.lecturer_dict(form.update_lecturer(db, identity, ctx, lecturer, fields)))
+
+
+@router.delete("/form/{department}/lecturers/{lecturer_id}")
+def form_delete_lecturer(
+    department: DeptCode, lecturer_id: LecturerId, identity: Me, db: Db, generator: Generator
+) -> dict[str, Any]:
+    ctx = form.context(generator, identity, department, None)
+    lecturer = form.get_lecturer(db, lecturer_id)
+    form.lecturer_ctx_check(lecturer, ctx)
+    form.delete_lecturer(db, identity, ctx, lecturer)
+    return ok(None)

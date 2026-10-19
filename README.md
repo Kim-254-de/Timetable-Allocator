@@ -6,11 +6,49 @@ department's Chair of Department (COD) and allocation staff assign a lecturer
 to every class their department owns, including classes taught to other
 departments' students ("servicing"). It replaces the Word allocation form.
 
-The Allocator talks **only to SMARTTT** (never to the Timetable Generator),
-over SMARTTT's `/api/v1/integrations/allocator/` endpoints with its own
-`X-API-Key`. SMARTTT holds the published timetable and is the truth for who
-teaches what; every allocation is written there on save, and SMARTTT
-re-checks clashes under a lock. See `SYSTEM_HANDOFF.md` for the whole platform.
+## The allocation form (start here)
+
+Each department signs in and opens **Course allocation**. The units and groups
+come from the **Timetable Generator** (where the Director's office enters
+them), read from its `/api/integrations/allocator/` endpoints with
+`GENERATOR_API_KEY`. For every unit, or every group of a split unit, the
+department picks a lecturer and fills in L, P and CF, as on the Word form:
+
+- **Lecturers**: each department keeps its own list (title, name, staff
+  number, FT/PT, phone, email, weekly hour limit). The staff number is what
+  recognises the same person on another department's list (and in SMARTTT).
+  Lecturers can be added one at a time, inline while allocating, or pasted
+  from Excel.
+- **Units**: the department's units from the Generator, with their class rows
+  and, once the Director has published the timetable, their times and rooms.
+  Classes taught to another department's students are marked *servicing*. A
+  unit the timetable doesn't have yet can still be typed in; it is flagged.
+- **Checks**: once the timetable is published, a lecturer is refused for a
+  class at the same time as another of their classes, or over their weekly
+  hour limit.
+- **Paste from Excel / Word**: rows of Course code, Group, Course title, L, P,
+  CF, Lecturer ("Dr. Jane Otieno (PT)"); new lecturers are added to the list.
+- **Submit**: the COD submits, which locks the form until the COD reopens it.
+- **Download**: PDF, Word or Excel in the allocation form layout: one table
+  per class row with a TOTAL row, "Servicing for other departments", and
+  "Prepared by". Phone numbers appear only on this, the department's own download.
+- **All departments**: the Directorate sees every department's progress.
+
+API: `GET /api/generator/terms`, `GET /api/form/progress`,
+`GET /api/form/{dept}`, `PUT /api/form/{dept}/entries`,
+`POST /api/form/{dept}/entries/bulk`, `DELETE /api/form/{dept}/entries/{id}`,
+`POST /api/form/{dept}/submit|reopen`, `GET /api/form/{dept}/export.pdf|docx|xlsx`,
+`/api/form/{dept}/lecturers[/bulk|/{id}]`. `{dept}` is the department's code
+in the Generator (e.g. `DCOMP`); a signed-in person belongs to it when SMARTTT
+lists them under a department with the same SMARTTT id, code or name.
+
+## The earlier SMARTTT board
+
+The pages below (`/departments/{id}`) work over SMARTTT's
+`/api/v1/integrations/allocator/` endpoints with SMARTTT's `X-API-Key`, where
+SMARTTT holds the published timetable and re-checks clashes under a lock.
+They need those SMARTTT endpoints to be live. See `SYSTEM_HANDOFF.md` for the
+whole platform.
 
 ## What it does
 
@@ -68,7 +106,7 @@ Backend (Python 3.12):
 cd backend
 python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_BASE_URL, SMARTTT_API_KEY,
+cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_*, GENERATOR_BASE_URL, GENERATOR_API_KEY,
                                                   # ENVIRONMENT=development, COOKIE_SECURE=false
 alembic upgrade head
 uvicorn app.main:app --port 8001 --reload

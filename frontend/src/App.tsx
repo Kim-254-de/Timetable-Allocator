@@ -1,10 +1,11 @@
-import { NavLink, Navigate, Outlet, Route, Routes, useSearchParams } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import clsx from 'clsx'
 import { AxiosError } from 'axios'
 import { errorMessage } from '@/lib/api'
-import { termText } from '@/lib/format'
-import { useDepartments, useLogout, useMe, useTerms } from '@/lib/queries'
+import { useLogout, useMe } from '@/lib/queries'
+import { AllocationFormPage } from '@/pages/AllocationFormPage'
 import { DepartmentPage } from '@/pages/DepartmentPage'
+import { FormProgressPage } from '@/pages/FormProgressPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 
@@ -18,7 +19,9 @@ export function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<Home />} />
+        <Route index element={<FormProgressPage />} />
+        <Route path="form/:code" element={<AllocationFormPage />} />
+        {/* The earlier board over SMARTTT's sections, kept for when SMARTTT's allocation endpoints are live. */}
         <Route path="departments/:departmentId" element={<DepartmentPage />} />
         <Route path="progress" element={<ProgressPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -27,21 +30,9 @@ export function App() {
   )
 }
 
-function Home() {
-  const me = useMe()
-  if (me.data?.timetabling_office) return <Navigate to="/progress" replace />
-  const first = me.data?.departments[0]
-  return first ? <Navigate to={`/departments/${first.id}`} replace /> : null
-}
-
 function Layout() {
   const me = useMe()
-  const departments = useDepartments()
-  const terms = useTerms()
   const logout = useLogout()
-  const [search, setSearch] = useSearchParams()
-  const term = search.get('term') ?? ''
-  const suffix = term ? `?term=${term}` : ''
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -49,26 +40,12 @@ function Layout() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3">
           <span className="font-semibold text-emerald-800">Timetable Allocator</span>
           <nav className="flex flex-wrap gap-1 text-sm">
-            {me.data?.timetabling_office && (
-              <NavLink to={`/progress${suffix}`}
-                className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
-                All departments
-              </NavLink>
-            )}
-            {(me.data?.timetabling_office ? [] : departments.data ?? []).map((d) => (
-              <NavLink key={d.id} to={`/departments/${d.id}${suffix}`}
-                className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
-                {d.name}
-              </NavLink>
-            ))}
+            <NavLink to="/" end
+              className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
+              Course allocation
+            </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
-            <select aria-label="Term" value={term}
-              onChange={(e) => setSearch(e.target.value ? { term: e.target.value } : {})}
-              className="rounded-md border border-slate-300 px-2 py-1">
-              <option value="">Current term</option>
-              {terms.data?.map((t) => <option key={t.id} value={t.id}>{termText(t)}</option>)}
-            </select>
             <span className="text-slate-600">{me.data?.full_name}</span>
             <button onClick={() => logout.mutate()} className="text-emerald-700">Sign out</button>
           </div>

@@ -1,7 +1,12 @@
 """
-The Allocator's own data. It keeps no copy of the timetable: published
-sections, lecturers and who teaches what are read from SMARTTT each time.
-What lives here is what only the Allocator knows: who allocated each class
+The Allocator's own data.
+
+The allocation form (what departments fill in): each department's own list
+of lecturers, its allocation rows (unit, group, lecturer, L/P/CF hours) for a
+term of the Timetable Generator, and its submissions. Units and groups are
+read from the Generator; the Allocator keeps no copy of the timetable.
+
+Also kept from the SMARTTT-based allocation: who allocated each SMARTTT class
 and when, lecturers' unavailability, departments' submissions, the audit
 trail, and sign-in sessions.
 """
@@ -16,6 +21,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -175,3 +181,91 @@ class LoginAttempt(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(255))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# -- the allocation form ---------------------------------------------------------------
+
+
+class EmploymentType(enum.StrEnum):
+    FULL_TIME = "full_time"
+    PART_TIME = "part_time"
+
+
+class Lecturer(Base):
+    """
+    A lecturer on a department's own list. Departments enter their lecturers
+    here; a lecturer teaching for two departments can be on both lists with the
+    same staff number, and the clash check treats them as one person.
+    """
+
+    __tablename__ = "lecturers"
+    __table_args__ = (Index("ix_lecturer_department", "department_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    department_code: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(30), default="")
+    full_name: Mapped[str] = mapped_column(String(255))
+    staff_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    employment_type: Mapped[EmploymentType] = mapped_column(
+        Enum(EmploymentType, name="employment_type", values_callable=lambda e: [m.value for m in e]),
+        default=EmploymentType.FULL_TIME,
+    )
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    max_weekly_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class FormEntry(Base):
+    """
+    One row of a department's allocation form: a unit (or one group of it) for a
+    term of the Generator, the lecturer given it, and the form's L/P/CF hours.
+    `key` is the class ("COSC103-GRA"); each class has one row per term.
+    """
+
+    __tablename__ = "form_entries"
+    __table_args__ = (
+        UniqueConstraint("generator_term_id", "key", name="uq_form_entry_term_key"),
+        Index("ix_form_entry_department", "generator_term_id", "department_code"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generator_term_id: Mapped[str] = mapped_column(String(64))
+    department_code: Mapped[str] = mapped_column(String(32))
+    key: Mapped[str] = mapped_column(String(80))
+    unit_code: Mapped[str] = mapped_column(String(64))
+    unit_title: Mapped[str] = mapped_column(String(255))
+    group_label: Mapped[str] = mapped_column(String(50), default="")
+    # Class row labels as the Generator printed them when the row was saved.
+    class_rows: Mapped[list[str]] = mapped_column(JSON, default=list)
+    lecturer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="RESTRICT"), nullable=True
+    )
+    lecture_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    practical_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    cf_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    entered_by_account_id: Mapped[str] = mapped_column(String(64))
+    entered_by_name: Mapped[str] = mapped_column(String(255))
+    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    lecturer: Mapped[Lecturer | None] = relationship(lazy="joined")
+
+
+class FormSubmission(Base):
+    """A COD submitting their department's allocation form for a term; reopening ends it."""
+
+    __tablename__ = "form_submissions"
+    __table_args__ = (Index("ix_form_submission_department", "generator_term_id", "department_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generator_term_id: Mapped[str] = mapped_column(String(64))
+    department_code: Mapped[str] = mapped_column(String(32))
+    submitted_by_account_id: Mapped[str] = mapped_column(String(64))
+    submitted_by_name: Mapped[str] = mapped_column(String(255))
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    entry_count: Mapped[int] = mapped_column(Integer)
+    allocated_count: Mapped[int] = mapped_column(Integer)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reopened_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

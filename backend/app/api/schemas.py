@@ -49,3 +49,60 @@ class Period(_Strict):
 
 class AvailabilityBody(_Strict):
     unavailable: Annotated[list[Period], Field(max_length=50)]
+
+
+Text = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)]
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=255)]
+UnitCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=64)]
+
+
+class FormEntryBody(_Strict):
+    """
+    One row of a department's allocation form. For a unit in the Generator the
+    title and class rows come from the Generator; `unit_title` and
+    `class_rows` are only used for a unit the timetable doesn't have yet.
+    """
+
+    unit_code: UnitCode
+    group_label: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] = ""
+    unit_title: Text = ""
+    class_rows: Annotated[list[Text], Field(max_length=20)] = []
+    lecturer_id: str | None = None
+    lecture_hours: Hours | None = None
+    practical_hours: Hours | None = None
+    cf_hours: Hours | None = None
+
+    @field_validator("lecturer_id")
+    @classmethod
+    def _uuid_like(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-fA-F-]{32,36}", value):
+            raise ValueError("must be a lecturer id")
+        return value
+
+
+class LecturerBody(_Strict):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] = ""
+    full_name: Name
+    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
+    employment_type: Literal["full_time", "part_time"] = "full_time"
+    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] = ""
+    email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] = ""
+    max_weekly_hours: Annotated[int, Field(ge=1, le=60)] | None = None
+    active: bool = True
+
+
+class LecturerPatch(_Strict):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] | None = None
+    full_name: Name | None = None
+    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
+    employment_type: Literal["full_time", "part_time"] | None = None
+    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None
+    email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
+    max_weekly_hours: Annotated[int, Field(ge=0, le=60)] | None = None
+    active: bool | None = None
+
+
+class BulkBody(_Strict):
+    """Rows pasted from Excel or Word, one dict per row, keyed by column heading."""
+
+    rows: Annotated[list[dict[str, str | int | float | None]], Field(min_length=1, max_length=2000)]
