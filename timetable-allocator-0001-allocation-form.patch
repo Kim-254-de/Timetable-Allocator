@@ -1,0 +1,3168 @@
+From 5b13a986b7d448dffb6f32e3c790bf0e761c78d1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 19 Oct 2026 18:27:05 +0300
+Subject: [PATCH] Allocation form: departments enter lecturers, units and
+ groups, and download it
+
+Units and groups now come from the Timetable Generator (its
+/api/integrations/allocator endpoints, GENERATOR_API_KEY), so departments
+fill in their allocation where the Director's office entered the timetable.
+
+- Each department keeps its own lecturer list (title, name, staff number,
+  FT/PT, phone, email, weekly hour limit); one person on two lists is
+  recognised by staff number.
+- The form: per unit or group, a lecturer and L/P/CF hours. Servicing
+  classes are marked; units not in the timetable can be typed in and are
+  flagged. Once the timetable is published, lecturer clashes and weekly
+  hour limits are refused.
+- Paste from Excel/Word (lecturers are added from "Dr. Name (PT)"),
+  COD submit/reopen, and a Directorate progress view.
+- Downloads as PDF, Word and Excel in the allocation form layout.
+- Migration 0003, tests with a fake Generator, new frontend pages.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UKcxXFW2Czwg9FhZjJfLy3
+---
+ .env.example                                  |   7 +
+ README.md                                     |  50 +-
+ .../alembic/versions/0003_allocation_form.py  |  90 ++
+ backend/app/api/routes.py                     | 161 +++-
+ backend/app/api/schemas.py                    |  57 ++
+ backend/app/clients/generator.py              |  90 ++
+ backend/app/config.py                         |   7 +
+ backend/app/models.py                         | 100 +-
+ backend/app/services/form.py                  | 904 ++++++++++++++++++
+ backend/app/services/form_export.py           | 265 +++++
+ backend/pyproject.toml                        |   2 +
+ backend/tests/conftest.py                     |  13 +
+ backend/tests/fake_generator.py               | 106 ++
+ backend/tests/test_form.py                    |  97 ++
+ frontend/src/App.tsx                          |  45 +-
+ frontend/src/components/BulkPaste.test.ts     |  25 +
+ frontend/src/components/BulkPaste.tsx         | 160 ++++
+ frontend/src/components/Dialog.tsx            |  26 +
+ frontend/src/lib/form.ts                      | 180 ++++
+ frontend/src/pages/AllocationFormPage.tsx     | 431 +++++++++
+ frontend/src/pages/FormProgressPage.tsx       |  49 +
+ 21 files changed, 2820 insertions(+), 45 deletions(-)
+ create mode 100644 backend/alembic/versions/0003_allocation_form.py
+ create mode 100644 backend/app/clients/generator.py
+ create mode 100644 backend/app/services/form.py
+ create mode 100644 backend/app/services/form_export.py
+ create mode 100644 backend/tests/fake_generator.py
+ create mode 100644 backend/tests/test_form.py
+ create mode 100644 frontend/src/components/BulkPaste.test.ts
+ create mode 100644 frontend/src/components/BulkPaste.tsx
+ create mode 100644 frontend/src/components/Dialog.tsx
+ create mode 100644 frontend/src/lib/form.ts
+ create mode 100644 frontend/src/pages/AllocationFormPage.tsx
+ create mode 100644 frontend/src/pages/FormProgressPage.tsx
+
+diff --git a/.env.example b/.env.example
+index 31675ca..bc89ee0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -15,6 +15,13 @@ SMARTTT_TIMEOUT_SECONDS=15
+ # Cache for reads from SMARTTT, at most 60 seconds.
+ SMARTTT_CACHE_SECONDS=60
+ 
++# The Timetable Generator, where the Director's office enters units and groups.
++# The allocation form reads them from its /api/integrations/allocator/ endpoints.
++GENERATOR_BASE_URL=http://localhost:8001
++# Must equal ALLOCATOR_API_KEY in the Generator (generate as above).
++GENERATOR_API_KEY=
++GENERATOR_TIMEOUT_SECONDS=15
++
+ # Sign-in sessions.
+ COOKIE_SECURE=true
+ SESSION_IDLE_MINUTES=120
+diff --git a/README.md b/README.md
+index 19d80e7..d1a092b 100644
+--- a/README.md
++++ b/README.md
+@@ -6,11 +6,49 @@ department's Chair of Department (COD) and allocation staff assign a lecturer
+ to every class their department owns, including classes taught to other
+ departments' students ("servicing"). It replaces the Word allocation form.
+ 
+-The Allocator talks **only to SMARTTT** (never to the Timetable Generator),
+-over SMARTTT's `/api/v1/integrations/allocator/` endpoints with its own
+-`X-API-Key`. SMARTTT holds the published timetable and is the truth for who
+-teaches what; every allocation is written there on save, and SMARTTT
+-re-checks clashes under a lock. See `SYSTEM_HANDOFF.md` for the whole platform.
++## The allocation form (start here)
++
++Each department signs in and opens **Course allocation**. The units and groups
++come from the **Timetable Generator** (where the Director's office enters
++them), read from its `/api/integrations/allocator/` endpoints with
++`GENERATOR_API_KEY`. For every unit, or every group of a split unit, the
++department picks a lecturer and fills in L, P and CF, as on the Word form:
++
++- **Lecturers**: each department keeps its own list (title, name, staff
++  number, FT/PT, phone, email, weekly hour limit). The staff number is what
++  recognises the same person on another department's list (and in SMARTTT).
++  Lecturers can be added one at a time, inline while allocating, or pasted
++  from Excel.
++- **Units**: the department's units from the Generator, with their class rows
++  and, once the Director has published the timetable, their times and rooms.
++  Classes taught to another department's students are marked *servicing*. A
++  unit the timetable doesn't have yet can still be typed in; it is flagged.
++- **Checks**: once the timetable is published, a lecturer is refused for a
++  class at the same time as another of their classes, or over their weekly
++  hour limit.
++- **Paste from Excel / Word**: rows of Course code, Group, Course title, L, P,
++  CF, Lecturer ("Dr. Jane Otieno (PT)"); new lecturers are added to the list.
++- **Submit**: the COD submits, which locks the form until the COD reopens it.
++- **Download**: PDF, Word or Excel in the allocation form layout: one table
++  per class row with a TOTAL row, "Servicing for other departments", and
++  "Prepared by". Phone numbers appear only on this, the department's own download.
++- **All departments**: the Directorate sees every department's progress.
++
++API: `GET /api/generator/terms`, `GET /api/form/progress`,
++`GET /api/form/{dept}`, `PUT /api/form/{dept}/entries`,
++`POST /api/form/{dept}/entries/bulk`, `DELETE /api/form/{dept}/entries/{id}`,
++`POST /api/form/{dept}/submit|reopen`, `GET /api/form/{dept}/export.pdf|docx|xlsx`,
++`/api/form/{dept}/lecturers[/bulk|/{id}]`. `{dept}` is the department's code
++in the Generator (e.g. `DCOMP`); a signed-in person belongs to it when SMARTTT
++lists them under a department with the same SMARTTT id, code or name.
++
++## The earlier SMARTTT board
++
++The pages below (`/departments/{id}`) work over SMARTTT's
++`/api/v1/integrations/allocator/` endpoints with SMARTTT's `X-API-Key`, where
++SMARTTT holds the published timetable and re-checks clashes under a lock.
++They need those SMARTTT endpoints to be live. See `SYSTEM_HANDOFF.md` for the
++whole platform.
+ 
+ ## What it does
+ 
+@@ -68,7 +106,7 @@ Backend (Python 3.12):
+ cd backend
+ python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+ pip install -e ".[dev]"
+-cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_BASE_URL, SMARTTT_API_KEY,
++cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_*, GENERATOR_BASE_URL, GENERATOR_API_KEY,
+                                                   # ENVIRONMENT=development, COOKIE_SECURE=false
+ alembic upgrade head
+ uvicorn app.main:app --port 8001 --reload
+diff --git a/backend/alembic/versions/0003_allocation_form.py b/backend/alembic/versions/0003_allocation_form.py
+new file mode 100644
+index 0000000..62f3fa9
+--- /dev/null
++++ b/backend/alembic/versions/0003_allocation_form.py
+@@ -0,0 +1,90 @@
++"""the allocation form: department lecturers, form rows and submissions
++
++Revision ID: 0003
++Revises: 0002
++Create Date: 2026-10-19 12:00:00
++"""
++
++from collections.abc import Sequence
++
++import sqlalchemy as sa
++
++from alembic import op
++
++revision: str = "0003"
++down_revision: str | None = "0002"
++branch_labels: str | Sequence[str] | None = None
++depends_on: str | Sequence[str] | None = None
++
++employment_type = sa.Enum("full_time", "part_time", name="employment_type")
++
++
++def upgrade() -> None:
++    op.create_table(
++        "lecturers",
++        sa.Column("id", sa.Uuid(), nullable=False),
++        sa.Column("department_code", sa.String(length=32), nullable=False),
++        sa.Column("title", sa.String(length=30), nullable=False),
++        sa.Column("full_name", sa.String(length=255), nullable=False),
++        sa.Column("staff_number", sa.String(length=64), nullable=True),
++        sa.Column("employment_type", employment_type, nullable=False),
++        sa.Column("phone", sa.String(length=40), nullable=False),
++        sa.Column("email", sa.String(length=255), nullable=False),
++        sa.Column("max_weekly_hours", sa.Integer(), nullable=True),
++        sa.Column("active", sa.Boolean(), nullable=False),
++        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
++        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
++        sa.PrimaryKeyConstraint("id"),
++    )
++    op.create_index("ix_lecturer_department", "lecturers", ["department_code"], unique=False)
++    op.create_table(
++        "form_entries",
++        sa.Column("id", sa.Uuid(), nullable=False),
++        sa.Column("generator_term_id", sa.String(length=64), nullable=False),
++        sa.Column("department_code", sa.String(length=32), nullable=False),
++        sa.Column("key", sa.String(length=80), nullable=False),
++        sa.Column("unit_code", sa.String(length=64), nullable=False),
++        sa.Column("unit_title", sa.String(length=255), nullable=False),
++        sa.Column("group_label", sa.String(length=50), nullable=False),
++        sa.Column("class_rows", sa.JSON(), nullable=False),
++        sa.Column("lecturer_id", sa.Uuid(), nullable=True),
++        sa.Column("lecture_hours", sa.Numeric(precision=6, scale=1), nullable=True),
++        sa.Column("practical_hours", sa.Numeric(precision=6, scale=1), nullable=True),
++        sa.Column("cf_hours", sa.Numeric(precision=6, scale=1), nullable=True),
++        sa.Column("entered_by_account_id", sa.String(length=64), nullable=False),
++        sa.Column("entered_by_name", sa.String(length=255), nullable=False),
++        sa.Column("entered_at", sa.DateTime(timezone=True), nullable=False),
++        sa.ForeignKeyConstraint(["lecturer_id"], ["lecturers.id"], ondelete="RESTRICT"),
++        sa.PrimaryKeyConstraint("id"),
++        sa.UniqueConstraint("generator_term_id", "key", name="uq_form_entry_term_key"),
++    )
++    op.create_index(
++        "ix_form_entry_department", "form_entries", ["generator_term_id", "department_code"], unique=False
++    )
++    op.create_table(
++        "form_submissions",
++        sa.Column("id", sa.Uuid(), nullable=False),
++        sa.Column("generator_term_id", sa.String(length=64), nullable=False),
++        sa.Column("department_code", sa.String(length=32), nullable=False),
++        sa.Column("submitted_by_account_id", sa.String(length=64), nullable=False),
++        sa.Column("submitted_by_name", sa.String(length=255), nullable=False),
++        sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=False),
++        sa.Column("entry_count", sa.Integer(), nullable=False),
++        sa.Column("allocated_count", sa.Integer(), nullable=False),
++        sa.Column("reopened_at", sa.DateTime(timezone=True), nullable=True),
++        sa.Column("reopened_by_name", sa.String(length=255), nullable=True),
++        sa.PrimaryKeyConstraint("id"),
++    )
++    op.create_index(
++        "ix_form_submission_department", "form_submissions", ["generator_term_id", "department_code"], unique=False
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("ix_form_submission_department", table_name="form_submissions")
++    op.drop_table("form_submissions")
++    op.drop_index("ix_form_entry_department", table_name="form_entries")
++    op.drop_table("form_entries")
++    op.drop_index("ix_lecturer_department", table_name="lecturers")
++    op.drop_table("lecturers")
++    employment_type.drop(op.get_bind(), checkfirst=True)
+diff --git a/backend/app/api/routes.py b/backend/app/api/routes.py
+index 2cfd663..34515bc 100644
+--- a/backend/app/api/routes.py
++++ b/backend/app/api/routes.py
+@@ -8,19 +8,30 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
+ from sqlalchemy import text
+ from sqlalchemy.orm import Session
+ 
+-from app.api.schemas import SECTION_KEY, AllocationBody, AvailabilityBody, LoginBody
++from app.api.schemas import (
++    SECTION_KEY,
++    AllocationBody,
++    AvailabilityBody,
++    BulkBody,
++    FormEntryBody,
++    LecturerBody,
++    LecturerPatch,
++    LoginBody,
++)
+ from app.auth import Identity, current_identity, sign_in, sign_out
++from app.clients.generator import GeneratorClient, get_generator
+ from app.clients.smarttt import SmartttClient, get_smarttt
+ from app.config import Settings, get_settings
+ from app.db import get_db
+ from app.errors import ApiError, ok
+-from app.services import allocation, availability, export
++from app.services import allocation, availability, export, form, form_export
+ 
+ router = APIRouter()
+ 
+ Db = Annotated[Session, Depends(get_db)]
+ Smarttt = Annotated[SmartttClient, Depends(get_smarttt)]
+ Me = Annotated[Identity, Depends(current_identity)]
++Generator = Annotated[GeneratorClient, Depends(get_generator)]
+ Cfg = Annotated[Settings, Depends(get_settings)]
+ TermParam = Annotated[str | None, Query(alias="term", max_length=64)]
+ SectionKey = Annotated[str, Path(pattern=SECTION_KEY, max_length=64)]
+@@ -182,3 +193,149 @@ def put_availability(
+ @router.get("/progress")
+ def progress(identity: Me, db: Db, smarttt: Smarttt, term: TermParam = None) -> dict[str, Any]:
+     return ok(allocation.all_progress(db, smarttt, identity, term))
++
++
++# -- the allocation form (units and groups from the Timetable Generator) --------------------
++
++DeptCode = Annotated[str, Path(pattern=r"^[A-Za-z0-9 ._-]{1,32}$")]
++EntryId = Annotated[str, Path(pattern=r"^[0-9a-fA-F-]{32,36}$")]
++
++
++@router.get("/generator/terms")
++def generator_terms(_identity: Me, generator: Generator) -> dict[str, Any]:
++    return ok(generator.terms())
++
++
++@router.get("/form/progress")
++def form_progress(identity: Me, db: Db, generator: Generator, term: TermParam = None) -> dict[str, Any]:
++    return ok(form.progress(db, generator, identity, term))
++
++
++@router.get("/form/{department}")
++def form_board(
++    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
++) -> dict[str, Any]:
++    return ok(form.board(db, generator, identity, department, term))
++
++
++@router.put("/form/{department}/entries")
++def form_save(
++    department: DeptCode,
++    body: FormEntryBody,
++    identity: Me,
++    db: Db,
++    generator: Generator,
++    term: TermParam = None,
++) -> dict[str, Any]:
++    return ok(form.save_entry(db, generator, identity, department, term, body.model_dump(exclude_unset=True)))
++
++
++@router.post("/form/{department}/entries/bulk")
++def form_bulk(
++    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator, term: TermParam = None
++) -> dict[str, Any]:
++    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows))
++
++
++@router.delete("/form/{department}/entries/{entry_id}")
++def form_delete(
++    department: DeptCode,
++    entry_id: EntryId,
++    identity: Me,
++    db: Db,
++    generator: Generator,
++    term: TermParam = None,
++) -> dict[str, Any]:
++    form.delete_entry(db, generator, identity, department, term, entry_id)
++    return ok(None)
++
++
++@router.post("/form/{department}/submit")
++def form_submit(
++    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
++) -> dict[str, Any]:
++    return ok(form.submit(db, generator, identity, department, term))
++
++
++@router.post("/form/{department}/reopen")
++def form_reopen(
++    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
++) -> dict[str, Any]:
++    return ok(form.reopen(db, generator, identity, department, term))
++
++
++@router.get("/form/{department}/export.{fmt}")
++def form_export_file(
++    department: DeptCode,
++    fmt: Literal["pdf", "docx", "xlsx"],
++    identity: Me,
++    db: Db,
++    generator: Generator,
++    term: TermParam = None,
++) -> Response:
++    board = form.board(db, generator, identity, department, term)
++    submitted = board["submission"]["submitted_by"] if board["submission"] else identity.actor
++    content = form_export.BUILDERS[fmt](form_export.layout(board, submitted.split(" (")[0]))
++    name = "".join(ch if ch.isalnum() else "-" for ch in str(board["term"].get("name") or "term")).strip("-")
++    filename = f"allocation-{form.compact(board['department']['code'])}-{name}.{fmt}"
++    return Response(
++        content,
++        media_type=form_export.MEDIA[fmt],
++        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
++    )
++
++
++# -- each department's own lecturers ---------------------------------------------------------
++
++
++@router.get("/form/{department}/lecturers")
++def form_lecturers(department: DeptCode, identity: Me, db: Db, generator: Generator) -> dict[str, Any]:
++    ctx = form.context(generator, identity, department, None)
++    show = ctx.role is not None or identity.timetabling_office
++    return ok(
++        [form.lecturer_dict(lec, show) for lec in form.department_lecturers(db, form.compact(department))]
++    )
++
++
++@router.post("/form/{department}/lecturers")
++def form_add_lecturer(
++    department: DeptCode, body: LecturerBody, identity: Me, db: Db, generator: Generator
++) -> dict[str, Any]:
++    ctx = form.context(generator, identity, department, None)
++    return ok(form.lecturer_dict(form.create_lecturer(db, identity, ctx, body.model_dump())))
++
++
++@router.post("/form/{department}/lecturers/bulk")
++def form_bulk_lecturers(
++    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator
++) -> dict[str, Any]:
++    return ok(form.bulk_lecturers(db, generator, identity, department, body.rows))
++
++
++@router.patch("/form/{department}/lecturers/{lecturer_id}")
++def form_update_lecturer(
++    department: DeptCode,
++    lecturer_id: LecturerId,
++    body: LecturerPatch,
++    identity: Me,
++    db: Db,
++    generator: Generator,
++) -> dict[str, Any]:
++    ctx = form.context(generator, identity, department, None)
++    lecturer = form.get_lecturer(db, lecturer_id)
++    form.lecturer_ctx_check(lecturer, ctx)
++    fields = body.model_dump(exclude_unset=True)
++    if fields.get("max_weekly_hours") == 0:
++        fields["max_weekly_hours"] = None
++    return ok(form.lecturer_dict(form.update_lecturer(db, identity, ctx, lecturer, fields)))
++
++
++@router.delete("/form/{department}/lecturers/{lecturer_id}")
++def form_delete_lecturer(
++    department: DeptCode, lecturer_id: LecturerId, identity: Me, db: Db, generator: Generator
++) -> dict[str, Any]:
++    ctx = form.context(generator, identity, department, None)
++    lecturer = form.get_lecturer(db, lecturer_id)
++    form.lecturer_ctx_check(lecturer, ctx)
++    form.delete_lecturer(db, identity, ctx, lecturer)
++    return ok(None)
+diff --git a/backend/app/api/schemas.py b/backend/app/api/schemas.py
+index 2749c91..0883473 100644
+--- a/backend/app/api/schemas.py
++++ b/backend/app/api/schemas.py
+@@ -49,3 +49,60 @@ class Period(_Strict):
+ 
+ class AvailabilityBody(_Strict):
+     unavailable: Annotated[list[Period], Field(max_length=50)]
++
++
++Text = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)]
++Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=255)]
++UnitCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=64)]
++
++
++class FormEntryBody(_Strict):
++    """
++    One row of a department's allocation form. For a unit in the Generator the
++    title and class rows come from the Generator; `unit_title` and
++    `class_rows` are only used for a unit the timetable doesn't have yet.
++    """
++
++    unit_code: UnitCode
++    group_label: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] = ""
++    unit_title: Text = ""
++    class_rows: Annotated[list[Text], Field(max_length=20)] = []
++    lecturer_id: str | None = None
++    lecture_hours: Hours | None = None
++    practical_hours: Hours | None = None
++    cf_hours: Hours | None = None
++
++    @field_validator("lecturer_id")
++    @classmethod
++    def _uuid_like(cls, value: str | None) -> str | None:
++        if value is not None and not re.fullmatch(r"[0-9a-fA-F-]{32,36}", value):
++            raise ValueError("must be a lecturer id")
++        return value
++
++
++class LecturerBody(_Strict):
++    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] = ""
++    full_name: Name
++    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
++    employment_type: Literal["full_time", "part_time"] = "full_time"
++    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] = ""
++    email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] = ""
++    max_weekly_hours: Annotated[int, Field(ge=1, le=60)] | None = None
++    active: bool = True
++
++
++class LecturerPatch(_Strict):
++    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] | None = None
++    full_name: Name | None = None
++    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
++    employment_type: Literal["full_time", "part_time"] | None = None
++    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None
++    email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
++    max_weekly_hours: Annotated[int, Field(ge=0, le=60)] | None = None
++    active: bool | None = None
++
++
++class BulkBody(_Strict):
++    """Rows pasted from Excel or Word, one dict per row, keyed by column heading."""
++
++    rows: Annotated[list[dict[str, str | int | float | None]], Field(min_length=1, max_length=2000)]
+diff --git a/backend/app/clients/generator.py b/backend/app/clients/generator.py
+new file mode 100644
+index 0000000..1deba1d
+--- /dev/null
++++ b/backend/app/clients/generator.py
+@@ -0,0 +1,90 @@
++"""
++Client for the Timetable Generator's read-only Allocator endpoints
++(/api/integrations/allocator/), authenticated with this system's own key
++(X-API-Key = GENERATOR_API_KEY here, ALLOCATOR_API_KEY there).
++
++The Generator is where the Directorate enters each term's units and groups,
++so departments can fill in their allocation as soon as those exist, before
++the timetable is published. Once a version is published, each class also
++carries its meetings (day, time, room), which the lecturer clash check uses.
++"""
++
++from __future__ import annotations
++
++import logging
++import threading
++from typing import Any
++
++import httpx
++
++from app.config import Settings, get_settings
++from app.errors import ApiError
++
++logger = logging.getLogger(__name__)
++
++PREFIX = "/api/integrations/allocator"
++
++
++class GeneratorClient:
++    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None):
++        self._http = httpx.Client(
++            base_url=settings.generator_base_url.rstrip("/"),
++            timeout=settings.generator_timeout_seconds,
++            headers={"X-API-Key": settings.generator_api_key, "Accept": "application/json"},
++            transport=transport,
++        )
++
++    def close(self) -> None:
++        self._http.close()
++
++    def _get(self, path: str) -> Any:
++        try:
++            response = self._http.get(PREFIX + path)
++        except httpx.HTTPError as exc:
++            logger.warning("Generator GET %s failed: %s", path, exc)
++            raise ApiError(
++                503,
++                "GENERATOR_UNAVAILABLE",
++                "The Timetable Generator could not be reached. Try again shortly.",
++            ) from exc
++        if response.status_code in (401, 403):
++            logger.error("The Generator refused the Allocator's key (%s -> %s)", path, response.status_code)
++            raise ApiError(
++                503,
++                "GENERATOR_MISCONFIGURED",
++                "The Allocator is not set up to reach the Timetable Generator. Contact the administrator.",
++            )
++        if response.status_code == 404:
++            raise ApiError(404, "NOT_FOUND", "The Timetable Generator has no such term.")
++        if response.status_code >= 400:
++            logger.warning("Generator GET %s answered %s", path, response.status_code)
++            raise ApiError(
++                503, "GENERATOR_UNAVAILABLE", "The Timetable Generator could not answer. Try again."
++            )
++        body = response.json()
++        return body.get("data") if isinstance(body, dict) and "success" in body else body
++
++    def terms(self) -> list[dict[str, Any]]:
++        return list(self._get("/terms") or [])
++
++    def sections(self, term_id: str) -> dict[str, Any]:
++        return dict(self._get(f"/terms/{term_id}/sections") or {})
++
++
++_client: GeneratorClient | None = None
++_client_lock = threading.Lock()
++
++
++def get_generator() -> GeneratorClient:
++    global _client
++    with _client_lock:
++        if _client is None:
++            _client = GeneratorClient(get_settings())
++        return _client
++
++
++def set_generator(client: GeneratorClient | None) -> None:
++    """Swaps the shared client (tests)."""
++    global _client
++    with _client_lock:
++        _client = client
+diff --git a/backend/app/config.py b/backend/app/config.py
+index 8c5a85b..dd39920 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -24,6 +24,13 @@ class Settings(BaseSettings):
+     # most this long. Every write re-reads before checking.
+     smarttt_cache_seconds: int = Field(default=60, ge=0, le=60)
+ 
++    # The Timetable Generator: where each term's units, groups and published
++    # meetings come from for the allocation form. GENERATOR_API_KEY must equal
++    # ALLOCATOR_API_KEY in the Generator.
++    generator_base_url: str = "http://localhost:8001"
++    generator_api_key: str = ""
++    generator_timeout_seconds: float = 15.0
++
+     # Sign-in sessions: an opaque random token in an httpOnly cookie, stored hashed.
+     session_cookie_name: str = "ta_session"
+     csrf_cookie_name: str = "XSRF-TOKEN"
+diff --git a/backend/app/models.py b/backend/app/models.py
+index 8904e30..8ffd3e9 100644
+--- a/backend/app/models.py
++++ b/backend/app/models.py
+@@ -1,7 +1,12 @@
+ """
+-The Allocator's own data. It keeps no copy of the timetable: published
+-sections, lecturers and who teaches what are read from SMARTTT each time.
+-What lives here is what only the Allocator knows: who allocated each class
++The Allocator's own data.
++
++The allocation form (what departments fill in): each department's own list
++of lecturers, its allocation rows (unit, group, lecturer, L/P/CF hours) for a
++term of the Timetable Generator, and its submissions. Units and groups are
++read from the Generator; the Allocator keeps no copy of the timetable.
++
++Also kept from the SMARTTT-based allocation: who allocated each SMARTTT class
+ and when, lecturers' unavailability, departments' submissions, the audit
+ trail, and sign-in sessions.
+ """
+@@ -16,6 +21,7 @@ from typing import Any
+ 
+ from sqlalchemy import (
+     JSON,
++    Boolean,
+     DateTime,
+     Enum,
+     ForeignKey,
+@@ -175,3 +181,91 @@ class LoginAttempt(Base):
+     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+     key: Mapped[str] = mapped_column(String(255))
+     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++
++
++# -- the allocation form ---------------------------------------------------------------
++
++
++class EmploymentType(enum.StrEnum):
++    FULL_TIME = "full_time"
++    PART_TIME = "part_time"
++
++
++class Lecturer(Base):
++    """
++    A lecturer on a department's own list. Departments enter their lecturers
++    here; a lecturer teaching for two departments can be on both lists with the
++    same staff number, and the clash check treats them as one person.
++    """
++
++    __tablename__ = "lecturers"
++    __table_args__ = (Index("ix_lecturer_department", "department_code"),)
++
++    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
++    department_code: Mapped[str] = mapped_column(String(32))
++    title: Mapped[str] = mapped_column(String(30), default="")
++    full_name: Mapped[str] = mapped_column(String(255))
++    staff_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
++    employment_type: Mapped[EmploymentType] = mapped_column(
++        Enum(EmploymentType, name="employment_type", values_callable=lambda e: [m.value for m in e]),
++        default=EmploymentType.FULL_TIME,
++    )
++    phone: Mapped[str] = mapped_column(String(40), default="")
++    email: Mapped[str] = mapped_column(String(255), default="")
++    max_weekly_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
++    active: Mapped[bool] = mapped_column(Boolean, default=True)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
++
++
++class FormEntry(Base):
++    """
++    One row of a department's allocation form: a unit (or one group of it) for a
++    term of the Generator, the lecturer given it, and the form's L/P/CF hours.
++    `key` is the class ("COSC103-GRA"); each class has one row per term.
++    """
++
++    __tablename__ = "form_entries"
++    __table_args__ = (
++        UniqueConstraint("generator_term_id", "key", name="uq_form_entry_term_key"),
++        Index("ix_form_entry_department", "generator_term_id", "department_code"),
++    )
++
++    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
++    generator_term_id: Mapped[str] = mapped_column(String(64))
++    department_code: Mapped[str] = mapped_column(String(32))
++    key: Mapped[str] = mapped_column(String(80))
++    unit_code: Mapped[str] = mapped_column(String(64))
++    unit_title: Mapped[str] = mapped_column(String(255))
++    group_label: Mapped[str] = mapped_column(String(50), default="")
++    # Class row labels as the Generator printed them when the row was saved.
++    class_rows: Mapped[list[str]] = mapped_column(JSON, default=list)
++    lecturer_id: Mapped[uuid.UUID | None] = mapped_column(
++        ForeignKey("lecturers.id", ondelete="RESTRICT"), nullable=True
++    )
++    lecture_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
++    practical_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
++    cf_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
++    entered_by_account_id: Mapped[str] = mapped_column(String(64))
++    entered_by_name: Mapped[str] = mapped_column(String(255))
++    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
++
++    lecturer: Mapped[Lecturer | None] = relationship(lazy="joined")
++
++
++class FormSubmission(Base):
++    """A COD submitting their department's allocation form for a term; reopening ends it."""
++
++    __tablename__ = "form_submissions"
++    __table_args__ = (Index("ix_form_submission_department", "generator_term_id", "department_code"),)
++
++    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
++    generator_term_id: Mapped[str] = mapped_column(String(64))
++    department_code: Mapped[str] = mapped_column(String(32))
++    submitted_by_account_id: Mapped[str] = mapped_column(String(64))
++    submitted_by_name: Mapped[str] = mapped_column(String(255))
++    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    entry_count: Mapped[int] = mapped_column(Integer)
++    allocated_count: Mapped[int] = mapped_column(Integer)
++    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    reopened_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+diff --git a/backend/app/services/form.py b/backend/app/services/form.py
+new file mode 100644
+index 0000000..339d112
+--- /dev/null
++++ b/backend/app/services/form.py
+@@ -0,0 +1,904 @@
++"""
++The allocation form: what each department fills in, replacing the Word form.
++
++A department keeps its own list of lecturers and, for a term of the Timetable
++Generator, gives each of its units (or each group of a split unit) a lecturer
++and the form's L, P and CF hours. Units and groups come from the Generator;
++a unit the Generator doesn't have yet can still be typed in, and is flagged.
++
++Once the Director publishes the timetable, every class has its meetings, and
++a lecturer is refused for a class that would put them in two places at once,
++or over their weekly teaching hours. One person on two departments' lists
++(same staff number) is checked as one person.
++
++Departments are identified by their code in the Generator ("DCOMP"); a
++signed-in member of staff belongs to a department when SMARTTT lists them
++under it (matched on SMARTTT's department id, the code, or the name).
++"""
++
++from __future__ import annotations
++
++import re
++import uuid
++from collections import defaultdict
++from dataclasses import dataclass, replace
++from decimal import Decimal
++from typing import Any
++
++from sqlalchemy import func, select
++from sqlalchemy.orm import Session
++
++from app.auth import ROLE_COD, Identity
++from app.clients.generator import GeneratorClient
++from app.errors import ApiError
++from app.models import EmploymentType, FormEntry, FormSubmission, Lecturer, utcnow
++from app.services.allocation import audit
++from app.services.timeutil import DAY_ORDER, minutes, overlaps
++
++EMPLOYMENT_SHORT = {EmploymentType.FULL_TIME: "FT", EmploymentType.PART_TIME: "PT"}
++
++
++def compact(value: str) -> str:
++    return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
++
++
++def form_key(unit_code: str, group_label: str) -> str:
++    """'COSC 103', 'GR A' -> 'COSC103-GRA'; a whole unit -> 'COSC103-MAIN', as the Generator keys it."""
++    return f"{compact(unit_code)}-{compact(group_label) or 'MAIN'}"
++
++
++def _num(value: Decimal | None) -> float | None:
++    return float(value) if value is not None else None
++
++
++def _dec(value: float | None) -> Decimal | None:
++    return Decimal(str(value)) if value is not None else None
++
++
++# -- terms, departments and who may do what ------------------------------------------
++
++
++@dataclass
++class Context:
++    term: dict[str, Any]
++    sections: list[dict[str, Any]]
++    published_version: int | None
++    department: dict[str, Any]
++    role: str | None  # cod | admin | editor | None (viewing only)
++
++
++def pick_term(generator: GeneratorClient, term_id: str | None) -> dict[str, Any]:
++    terms = generator.terms()
++    if not terms:
++        raise ApiError(404, "NO_TERM", "The Timetable Generator has no term yet.")
++    if term_id is None:
++        return terms[0]
++    found = next((t for t in terms if t["id"] == term_id), None)
++    if found is None:
++        raise ApiError(404, "NOT_FOUND", "The Timetable Generator has no such term.")
++    return found
++
++
++def _role_for(identity: Identity, department: dict[str, Any]) -> str | None:
++    for d in identity.departments:
++        if (
++            (department.get("smarttt_id") is not None and department["smarttt_id"] == d.id)
++            or compact(d.code) == compact(department["code"])
++            or d.name.strip().lower() == str(department.get("name") or "").strip().lower()
++        ):
++            return d.role
++    return None
++
++
++def generator_departments(sections: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
++    """The departments that own units in the term, by compact code."""
++    found: dict[str, dict[str, Any]] = {}
++    for s in sections:
++        d = s.get("department")
++        if d:
++            found.setdefault(compact(d["code"]), d)
++    return found
++
++
++def visible_departments(identity: Identity, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
++    """The departments this person may open: all for the Directorate, else their own."""
++    owners = generator_departments(sections)
++    out: dict[str, dict[str, Any]] = {}
++    matched: set[str] = set()
++    for key, d in owners.items():
++        role = _role_for(identity, d)
++        if role is not None:
++            matched.update(
++                compact(m.code) for m in identity.departments if _role_for(_only(identity, m), d) is not None
++            )
++        if role is not None or identity.timetabling_office:
++            out[key] = {"code": d["code"], "name": d["name"], "role": role}
++    # A department with no units in the Generator yet can still fill in its form.
++    for m in identity.departments:
++        if compact(m.code) not in matched:
++            out.setdefault(compact(m.code), {"code": m.code, "name": m.name, "role": m.role})
++    return sorted(out.values(), key=lambda d: d["name"])
++
++
++def _only(identity: Identity, department: Any) -> Identity:
++    """The same person, with just one of their departments (to tell which one matched)."""
++
++    return replace(identity, departments=(department,))
++
++
++def context(
++    generator: GeneratorClient, identity: Identity, department_code: str, term_id: str | None
++) -> Context:
++    term = pick_term(generator, term_id)
++    data = generator.sections(term["id"])
++    sections = list(data.get("sections") or [])
++    owners = generator_departments(sections)
++    department = owners.get(compact(department_code))
++    if department is None:
++        mine = next((d for d in identity.departments if compact(d.code) == compact(department_code)), None)
++        if mine is None and not identity.timetabling_office:
++            raise ApiError(403, "FORBIDDEN", "You can only open your own department's allocation.")
++        department = {
++            "code": mine.code if mine else department_code,
++            "name": mine.name if mine else department_code,
++        }
++    role = _role_for(identity, department)
++    if role is None and not identity.timetabling_office:
++        raise ApiError(403, "FORBIDDEN", "You can only open your own department's allocation.")
++    return Context(
++        term=term,
++        sections=sections,
++        published_version=data.get("published_version"),
++        department={"code": department["code"], "name": department["name"]},
++        role=role,
++    )
++
++
++def _require_allocate(ctx: Context) -> None:
++    if ctx.role is None:
++        raise ApiError(
++            403, "FORBIDDEN", "Only this department's COD and allocation staff can change its allocation."
++        )
++
++
++def _require_cod(ctx: Context) -> None:
++    if ctx.role != ROLE_COD:
++        raise ApiError(403, "FORBIDDEN", "Only the Chair of Department can submit or reopen the allocation.")
++
++
++def _code(ctx: Context) -> str:
++    return compact(ctx.department["code"])
++
++
++def current_submission(db: Session, term_id: str, department_code: str) -> FormSubmission | None:
++    return db.scalar(
++        select(FormSubmission)
++        .where(
++            FormSubmission.generator_term_id == term_id,
++            FormSubmission.department_code == department_code,
++            FormSubmission.reopened_at.is_(None),
++        )
++        .order_by(FormSubmission.submitted_at.desc())
++        .limit(1)
++    )
++
++
++def _require_open(db: Session, ctx: Context) -> None:
++    if current_submission(db, ctx.term["id"], _code(ctx)) is not None:
++        raise ApiError(
++            409,
++            "FORM_SUBMITTED",
++            "This allocation has been submitted. The COD must reopen it before it can change.",
++        )
++
++
++# -- lecturers ------------------------------------------------------------------------------
++
++
++def lecturer_dict(lecturer: Lecturer, show_contacts: bool = True) -> dict[str, Any]:
++    return {
++        "id": str(lecturer.id),
++        "department_code": lecturer.department_code,
++        "title": lecturer.title,
++        "full_name": lecturer.full_name,
++        "staff_number": lecturer.staff_number,
++        "employment_type": lecturer.employment_type.value,
++        "phone": lecturer.phone if show_contacts else "",
++        "email": lecturer.email if show_contacts else "",
++        "max_weekly_hours": lecturer.max_weekly_hours,
++        "active": lecturer.active,
++    }
++
++
++def display_name(lecturer: Lecturer) -> str:
++    title = f"{lecturer.title} " if lecturer.title else ""
++    return f"{title}{lecturer.full_name} ({EMPLOYMENT_SHORT[lecturer.employment_type]})"
++
++
++def department_lecturers(db: Session, department_code: str) -> list[Lecturer]:
++    return list(
++        db.scalars(
++            select(Lecturer).where(Lecturer.department_code == department_code).order_by(Lecturer.full_name)
++        )
++    )
++
++
++def _apply_lecturer(db: Session, lecturer: Lecturer, fields: dict[str, Any]) -> None:
++    staff = fields.get("staff_number")
++    if staff:
++        staff = staff.strip().upper()
++        clash = db.scalar(
++            select(Lecturer).where(
++                Lecturer.department_code == lecturer.department_code,
++                func.upper(Lecturer.staff_number) == staff,
++                Lecturer.id != lecturer.id,
++            )
++        )
++        if clash is not None:
++            raise ApiError(409, "STAFF_NUMBER_TAKEN", f"{staff} is already on the list as {clash.full_name}.")
++        fields = {**fields, "staff_number": staff}
++    for key in ("title", "full_name", "staff_number", "phone", "email", "max_weekly_hours", "active"):
++        if key in fields:
++            setattr(lecturer, key, fields[key] if fields[key] != "" or key != "staff_number" else None)
++    if fields.get("employment_type") is not None:
++        lecturer.employment_type = EmploymentType(fields["employment_type"])
++
++
++def create_lecturer(
++    db: Session, identity: Identity, ctx: Context, fields: dict[str, Any], commit: bool = True
++) -> Lecturer:
++    _require_allocate(ctx)
++    lecturer = Lecturer(department_code=_code(ctx), full_name="", title="", phone="", email="")
++    _apply_lecturer(db, lecturer, fields)
++    db.add(lecturer)
++    db.flush()
++    audit(db, identity, "lecturer.create", "lecturer", str(lecturer.id), None, lecturer_dict(lecturer))
++    if commit:
++        db.commit()
++    return lecturer
++
++
++def get_lecturer(db: Session, lecturer_id: str) -> Lecturer:
++    try:
++        found = db.get(Lecturer, uuid.UUID(lecturer_id))
++    except ValueError:
++        found = None
++    if found is None:
++        raise ApiError(404, "NOT_FOUND", "No such lecturer.")
++    return found
++
++
++def update_lecturer(
++    db: Session, identity: Identity, ctx: Context, lecturer: Lecturer, fields: dict[str, Any]
++) -> Lecturer:
++    _require_allocate(ctx)
++    before = lecturer_dict(lecturer)
++    _apply_lecturer(db, lecturer, fields)
++    db.flush()
++    audit(db, identity, "lecturer.update", "lecturer", str(lecturer.id), before, lecturer_dict(lecturer))
++    db.commit()
++    return lecturer
++
++
++def delete_lecturer(db: Session, identity: Identity, ctx: Context, lecturer: Lecturer) -> None:
++    _require_allocate(ctx)
++    used = db.scalar(select(func.count()).select_from(FormEntry).where(FormEntry.lecturer_id == lecturer.id))
++    if used:
++        raise ApiError(
++            409,
++            "IN_USE",
++            f"{lecturer.full_name} is allocated {used} classes. Change those first, or mark them inactive.",
++        )
++    audit(db, identity, "lecturer.delete", "lecturer", str(lecturer.id), lecturer_dict(lecturer), None)
++    db.delete(lecturer)
++    db.commit()
++
++
++def lecturer_ctx_check(lecturer: Lecturer, ctx: Context) -> None:
++    if lecturer.department_code != _code(ctx):
++        raise ApiError(403, "FORBIDDEN", "That lecturer is on another department's list.")
++
++
++# -- the form -------------------------------------------------------------------------------
++
++
++def person(lecturer: Lecturer) -> str:
++    """One person across departments' lists: the staff number when known."""
++    return f"staff:{lecturer.staff_number.upper()}" if lecturer.staff_number else f"id:{lecturer.id}"
++
++
++def _when(m: dict[str, str]) -> str:
++    return f"{m['day_of_week']} {m['start_time']}-{m['end_time']}"
++
++
++def _hours(meetings: list[dict[str, str]]) -> float:
++    distinct = {(m["day_of_week"], m["start_time"], m["end_time"]) for m in meetings}
++    return round(sum(minutes(s, e) for _d, s, e in distinct) / 60, 2)
++
++
++def _term_entries(db: Session, term_id: str) -> list[FormEntry]:
++    return list(db.scalars(select(FormEntry).where(FormEntry.generator_term_id == term_id)))
++
++
++def check_lecturer(
++    db: Session,
++    term_id: str,
++    lecturer: Lecturer,
++    key: str,
++    meetings_by_key: dict[str, list[dict[str, str]]],
++    entries: list[FormEntry] | None = None,
++) -> list[dict[str, str]]:
++    """Why this lecturer can't take this class: a clash with another of their classes, or too many hours."""
++    mine = meetings_by_key.get(key) or []
++    who = person(lecturer)
++    others = [
++        e
++        for e in (entries if entries is not None else _term_entries(db, term_id))
++        if e.key != key and e.lecturer is not None and person(e.lecturer) == who
++    ]
++    problems: list[dict[str, str]] = []
++    for e in others:
++        for a in mine:
++            hit = next((b for b in meetings_by_key.get(e.key) or [] if overlaps(a, b)), None)
++            if hit is not None:
++                problems.append(
++                    {
++                        "code": "clash",
++                        "message": f"{lecturer.full_name} already teaches {e.unit_code}"
++                        f"{' ' + e.group_label if e.group_label else ''} on {_when(hit)}.",
++                    }
++                )
++                break
++    if lecturer.max_weekly_hours and mine:
++        week = [m for e in others for m in meetings_by_key.get(e.key) or []] + mine
++        total = _hours(week)
++        if total > lecturer.max_weekly_hours:
++            problems.append(
++                {
++                    "code": "over_hours",
++                    "message": f"{lecturer.full_name} would teach {total:g} hours a week; "
++                    f"the limit is {lecturer.max_weekly_hours}.",
++                }
++            )
++    return problems
++
++
++def _section_row(
++    section: dict[str, Any] | None,
++    entry: FormEntry | None,
++    department_code: str,
++    problems: list[dict[str, str]],
++) -> dict[str, Any]:
++    if section is not None:
++        class_rows = [
++            {
++                "label": r["label"],
++                "students": r.get("students"),
++                "department_code": (r.get("department") or {}).get("code"),
++            }
++            for r in section.get("class_rows") or []
++        ]
++        servicing = any(
++            r["department_code"] and compact(r["department_code"]) != department_code for r in class_rows
++        )
++        return {
++            "key": section["key"],
++            "unit_code": section["unit_code"],
++            "unit_title": section["unit_name"],
++            "group": section.get("group") or "",
++            "class_rows": class_rows,
++            "students": section.get("students"),
++            "weekly_hours": section.get("weekly_hours"),
++            "meetings": section.get("meetings") or [],
++            "servicing": servicing,
++            "in_timetable": True,
++            "entry": entry_dict(entry),
++            "problems": problems,
++        }
++    assert entry is not None
++    return {
++        "key": entry.key,
++        "unit_code": entry.unit_code,
++        "unit_title": entry.unit_title,
++        "group": entry.group_label,
++        "class_rows": [
++            {"label": label, "students": None, "department_code": None} for label in entry.class_rows
++        ],
++        "students": None,
++        "weekly_hours": None,
++        "meetings": [],
++        "servicing": False,
++        "in_timetable": False,
++        "entry": entry_dict(entry),
++        "problems": problems,
++    }
++
++
++def entry_dict(entry: FormEntry | None) -> dict[str, Any] | None:
++    if entry is None:
++        return None
++    return {
++        "id": str(entry.id),
++        "lecturer_id": str(entry.lecturer_id) if entry.lecturer_id else None,
++        "lecturer": display_name(entry.lecturer) if entry.lecturer else None,
++        "lecture_hours": _num(entry.lecture_hours),
++        "practical_hours": _num(entry.practical_hours),
++        "cf_hours": _num(entry.cf_hours),
++        "entered_by": entry.entered_by_name,
++        "entered_at": entry.entered_at.isoformat(),
++    }
++
++
++def board(
++    db: Session, generator: GeneratorClient, identity: Identity, department_code: str, term_id: str | None
++) -> dict[str, Any]:
++    ctx = context(generator, identity, department_code, term_id)
++    code = _code(ctx)
++    meetings_by_key = {s["key"]: s.get("meetings") or [] for s in ctx.sections}
++    own = [s for s in ctx.sections if s.get("department") and compact(s["department"]["code"]) == code]
++    own_keys = {s["key"] for s in own}
++    term_entries = _term_entries(db, ctx.term["id"])
++    mine = {e.key: e for e in term_entries if e.department_code == code}
++
++    rows = []
++    for s in own:
++        entry = mine.get(s["key"])
++        problems = (
++            check_lecturer(db, ctx.term["id"], entry.lecturer, s["key"], meetings_by_key, term_entries)
++            if entry is not None and entry.lecturer is not None
++            else []
++        )
++        rows.append(_section_row(s, entry, code, problems))
++    for key, entry in mine.items():
++        if key not in own_keys:
++            rows.append(_section_row(None, entry, code, []))
++    rows.sort(key=lambda r: (r["unit_code"], r["group"]))
++
++    lecturers = department_lecturers(db, code)
++    load: dict[uuid.UUID, dict[str, Any]] = {
++        lec.id: {"classes": 0, "meetings": [], "lecture_hours": 0.0, "practical_hours": 0.0}
++        for lec in lecturers
++    }
++    for e in mine.values():
++        if e.lecturer_id in load:
++            item = load[e.lecturer_id]
++            item["classes"] += 1
++            item["meetings"].extend(meetings_by_key.get(e.key) or [])
++            item["lecture_hours"] += float(e.lecture_hours or 0)
++            item["practical_hours"] += float(e.practical_hours or 0)
++    submission = current_submission(db, ctx.term["id"], code)
++    show_contacts = ctx.role is not None or identity.timetabling_office
++    return {
++        "term": ctx.term,
++        "published_version": ctx.published_version,
++        "department": ctx.department,
++        "role": ctx.role,
++        "can_edit": ctx.role is not None and submission is None,
++        "can_submit": ctx.role == ROLE_COD,
++        "rows": rows,
++        "summary": {
++            "classes": len(rows),
++            "allocated": sum(1 for r in rows if r["entry"] and r["entry"]["lecturer_id"]),
++            "not_in_timetable": sum(1 for r in rows if not r["in_timetable"]),
++            "problems": sum(1 for r in rows if r["problems"]),
++        },
++        "lecturers": [
++            {
++                **lecturer_dict(lec, show_contacts),
++                "display": display_name(lec),
++                "classes": load[lec.id]["classes"],
++                "weekly_hours": _hours(load[lec.id]["meetings"]),
++                "lecture_hours": load[lec.id]["lecture_hours"],
++                "practical_hours": load[lec.id]["practical_hours"],
++            }
++            for lec in lecturers
++        ],
++        "submission": (
++            {
++                "submitted_by": submission.submitted_by_name,
++                "submitted_at": submission.submitted_at.isoformat(),
++                "entry_count": submission.entry_count,
++                "allocated_count": submission.allocated_count,
++            }
++            if submission
++            else None
++        ),
++    }
++
++
++def save_entry(
++    db: Session,
++    generator: GeneratorClient,
++    identity: Identity,
++    department_code: str,
++    term_id: str | None,
++    fields: dict[str, Any],
++    ctx: Context | None = None,
++    commit: bool = True,
++) -> dict[str, Any]:
++    """
++    Adds or changes one row of the form. A unit in the Generator must belong to
++    this department; its title and class rows come from the Generator. A
++    lecturer is refused for a class that clashes with another of their
++    classes, or takes them over their weekly hours.
++    """
++    ctx = ctx or context(generator, identity, department_code, term_id)
++    _require_allocate(ctx)
++    _require_open(db, ctx)
++    code = _code(ctx)
++    key = form_key(fields["unit_code"], fields.get("group_label") or "")
++    sections = {s["key"]: s for s in ctx.sections}
++    section = sections.get(key)
++    if (
++        section is None
++        and not (fields.get("group_label") or "")
++        and any(k.startswith(f"{compact(fields['unit_code'])}-") for k in sections)
++    ):
++        groups = sorted(
++            s.get("group") or ""
++            for k, s in sections.items()
++            if k.startswith(f"{compact(fields['unit_code'])}-")
++        )
++        raise ApiError(
++            422,
++            "GROUP_REQUIRED",
++            f"{fields['unit_code']} is split into groups ({', '.join(groups)}); choose the group.",
++        )
++    if section is not None:
++        owner = section.get("department") or {}
++        if compact(owner.get("code", "")) != code:
++            raise ApiError(
++                403,
++                "NOT_YOUR_UNIT",
++                f"{section['unit_code']} belongs to {owner.get('name', 'another department')}, "
++                "which allocates it.",
++            )
++        title = section["unit_name"]
++        unit_code = section["unit_code"]
++        group = section.get("group") or ""
++        class_rows = [r["label"] for r in section.get("class_rows") or []]
++    else:
++        title = (fields.get("unit_title") or "").strip()
++        if not title:
++            raise ApiError(422, "VALIDATION_ERROR", "This unit isn't in the timetable yet; give its title.")
++        unit_code = fields["unit_code"].strip()
++        group = (fields.get("group_label") or "").strip()
++        class_rows = list(fields.get("class_rows") or [])
++
++    lecturer = None
++    if fields.get("lecturer_id"):
++        lecturer = get_lecturer(db, str(fields["lecturer_id"]))
++        lecturer_ctx_check(lecturer, ctx)
++        if not lecturer.active:
++            raise ApiError(422, "VALIDATION_ERROR", f"{lecturer.full_name} is marked inactive.")
++        problems = check_lecturer(
++            db, ctx.term["id"], lecturer, key, {k: s.get("meetings") or [] for k, s in sections.items()}
++        )
++        if problems:
++            raise ApiError(409, "LECTURER_UNAVAILABLE", problems[0]["message"], {"problems": problems})
++
++    entry = db.scalar(
++        select(FormEntry).where(FormEntry.generator_term_id == ctx.term["id"], FormEntry.key == key)
++    )
++    if entry is not None and entry.department_code != code:
++        raise ApiError(409, "TAKEN", f"{unit_code} {group} is on another department's form.")
++    before = entry_dict(entry)
++    if entry is None:
++        entry = FormEntry(generator_term_id=ctx.term["id"], department_code=code, key=key)
++        db.add(entry)
++    entry.unit_code = unit_code
++    entry.unit_title = title
++    entry.group_label = group
++    entry.class_rows = class_rows
++    entry.lecturer_id = lecturer.id if lecturer else None
++    entry.lecturer = lecturer
++    for name in ("lecture_hours", "practical_hours", "cf_hours"):
++        if name in fields:
++            setattr(entry, name, _dec(fields[name]))
++    entry.entered_by_account_id = identity.account_id
++    entry.entered_by_name = identity.actor
++    entry.entered_at = utcnow()
++    db.flush()
++    audit(db, identity, "form_entry.save", "form_entry", str(entry.id), before, entry_dict(entry))
++    if commit:
++        db.commit()
++    return _section_row(section, entry, code, [])
++
++
++def delete_entry(
++    db: Session,
++    generator: GeneratorClient,
++    identity: Identity,
++    department_code: str,
++    term_id: str | None,
++    entry_id: str,
++) -> None:
++    ctx = context(generator, identity, department_code, term_id)
++    _require_allocate(ctx)
++    _require_open(db, ctx)
++    try:
++        entry = db.get(FormEntry, uuid.UUID(entry_id))
++    except ValueError:
++        entry = None
++    if entry is None or entry.department_code != _code(ctx) or entry.generator_term_id != ctx.term["id"]:
++        raise ApiError(404, "NOT_FOUND", "No such row on this form.")
++    audit(db, identity, "form_entry.delete", "form_entry", entry_id, entry_dict(entry), None)
++    db.delete(entry)
++    db.commit()
++
++
++def submit(
++    db: Session, generator: GeneratorClient, identity: Identity, department_code: str, term_id: str | None
++) -> dict[str, Any]:
++    ctx = context(generator, identity, department_code, term_id)
++    _require_cod(ctx)
++    _require_open(db, ctx)
++    current = board(db, generator, identity, department_code, ctx.term["id"])
++    blocking = [r for r in current["rows"] if r["problems"]]
++    if blocking:
++        raise ApiError(
++            409,
++            "FORM_HAS_PROBLEMS",
++            f"{len(blocking)} classes have a lecturer clash or too many hours. Fix them before submitting.",
++            {"keys": [r["key"] for r in blocking]},
++        )
++    submission = FormSubmission(
++        generator_term_id=ctx.term["id"],
++        department_code=_code(ctx),
++        submitted_by_account_id=identity.account_id,
++        submitted_by_name=identity.actor,
++        entry_count=current["summary"]["classes"],
++        allocated_count=current["summary"]["allocated"],
++    )
++    db.add(submission)
++    db.flush()
++    audit(db, identity, "form.submit", "department", _code(ctx), None, current["summary"])
++    db.commit()
++    return board(db, generator, identity, department_code, ctx.term["id"])
++
++
++def reopen(
++    db: Session, generator: GeneratorClient, identity: Identity, department_code: str, term_id: str | None
++) -> dict[str, Any]:
++    ctx = context(generator, identity, department_code, term_id)
++    _require_cod(ctx)
++    submission = current_submission(db, ctx.term["id"], _code(ctx))
++    if submission is None:
++        raise ApiError(409, "NOT_SUBMITTED", "This allocation hasn't been submitted.")
++    submission.reopened_at = utcnow()
++    submission.reopened_by_name = identity.actor
++    audit(db, identity, "form.reopen", "department", _code(ctx), None, None)
++    db.commit()
++    return board(db, generator, identity, department_code, ctx.term["id"])
++
++
++def progress(
++    db: Session, generator: GeneratorClient, identity: Identity, term_id: str | None
++) -> dict[str, Any]:
++    """Every department's form at a glance, for the Directorate (others see their own)."""
++    term = pick_term(generator, term_id)
++    sections = list(generator.sections(term["id"]).get("sections") or [])
++    entries = _term_entries(db, term["id"])
++    allocated = {e.key for e in entries if e.lecturer_id}
++    by_department: dict[str, list[dict[str, Any]]] = defaultdict(list)
++    for s in sections:
++        if s.get("department"):
++            by_department[compact(s["department"]["code"])].append(s)
++    rows = []
++    for d in visible_departments(identity, sections):
++        code = compact(d["code"])
++        own = by_department.get(code, [])
++        submission = current_submission(db, term["id"], code)
++        rows.append(
++            {
++                **d,
++                "classes": len(own),
++                "allocated": sum(1 for s in own if s["key"] in allocated),
++                "submitted_at": submission.submitted_at.isoformat() if submission else None,
++                "submitted_by": submission.submitted_by_name if submission else None,
++            }
++        )
++    return {"term": term, "departments": rows}
++
++
++# -- bulk entry -------------------------------------------------------------------------------
++
++_KIND = re.compile(r"\((FT|PT)\)\s*$", re.IGNORECASE)
++_TITLE = re.compile(r"^(DR|PROF|MR|MRS|MS|MISS|ENG|REV)\.?\s+", re.IGNORECASE)
++
++
++def split_name(raw: str) -> tuple[str, str, EmploymentType]:
++    """'Dr. Joseph Omollo (PT)' -> ('Dr.', 'Joseph Omollo', part time), as the Word form writes lecturers."""
++    text = raw.strip()
++    kind = EmploymentType.FULL_TIME
++    match = _KIND.search(text)
++    if match:
++        kind = EmploymentType.PART_TIME if match.group(1).upper() == "PT" else EmploymentType.FULL_TIME
++        text = text[: match.start()].strip()
++    title = ""
++    match = _TITLE.match(text)
++    if match:
++        title = match.group(1).capitalize() + "."
++        text = text[match.end() :].strip()
++    return title, text, kind
++
++
++def _clean(row: dict[str, Any]) -> dict[str, str]:
++    out: dict[str, str] = {}
++    for key, value in row.items():
++        k = re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
++        v = str(value).strip() if value is not None else ""
++        if v:
++            out[k] = v
++    return out
++
++
++def _number(value: str | None, what: str) -> float | None:
++    if value in (None, ""):
++        return None
++    try:
++        number = float(str(value).replace(",", "."))
++    except ValueError as exc:
++        raise ValueError(f"{what} '{value}' is not a number") from exc
++    if not 0 <= number <= 500:
++        raise ValueError(f"{what} must be between 0 and 500")
++    return number
++
++
++def bulk_lecturers(
++    db: Session,
++    generator: GeneratorClient,
++    identity: Identity,
++    department_code: str,
++    rows: list[dict[str, Any]],
++) -> dict[str, Any]:
++    ctx = context(generator, identity, department_code, None)
++    _require_allocate(ctx)
++    created = updated = 0
++    errors: list[dict[str, Any]] = []
++    for line, raw in enumerate(rows, start=1):
++        r = _clean(raw)
++        try:
++            name_cell = r.get("full_name") or r.get("name") or r.get("lecturer")
++            if not name_cell:
++                raise ValueError("name is required")
++            title, name, kind = split_name(name_cell)
++            kind_cell = (r.get("employment") or r.get("ft_pt") or "").upper()
++            if kind_cell:
++                kind = EmploymentType.PART_TIME if kind_cell.startswith("P") else EmploymentType.FULL_TIME
++            fields: dict[str, Any] = {
++                "title": r.get("title", title),
++                "full_name": name,
++                "staff_number": r.get("staff_number") or r.get("staff_no"),
++                "employment_type": kind.value,
++                "phone": r.get("phone") or r.get("phone_no") or "",
++                "email": r.get("email") or "",
++            }
++            if r.get("max_hours") or r.get("max_weekly_hours"):
++                fields["max_weekly_hours"] = (
++                    int(float(r.get("max_hours") or r.get("max_weekly_hours") or 0)) or None
++                )
++            existing = _find_lecturer(db, _code(ctx), fields["staff_number"], name)
++            if existing is not None:
++                _apply_lecturer(db, existing, {k: v for k, v in fields.items() if v not in (None, "")})
++                updated += 1
++            else:
++                create_lecturer(db, identity, ctx, fields, commit=False)
++                created += 1
++            db.flush()
++        except (ValueError, ApiError) as exc:
++            errors.append({"line": line, "message": getattr(exc, "message", None) or str(exc)})
++    db.commit()
++    return {"created": created, "updated": updated, "errors": errors[:200], "error_count": len(errors)}
++
++
++def _find_lecturer(db: Session, department_code: str, staff_number: str | None, name: str) -> Lecturer | None:
++    if staff_number:
++        found = db.scalar(
++            select(Lecturer).where(
++                Lecturer.department_code == department_code,
++                func.upper(Lecturer.staff_number) == staff_number.strip().upper(),
++            )
++        )
++        if found is not None:
++            return found
++    wanted = " ".join(name.lower().split())
++    return next(
++        (
++            lec
++            for lec in department_lecturers(db, department_code)
++            if " ".join(lec.full_name.lower().split()) == wanted
++        ),
++        None,
++    )
++
++
++def bulk_entries(
++    db: Session,
++    generator: GeneratorClient,
++    identity: Identity,
++    department_code: str,
++    term_id: str | None,
++    rows: list[dict[str, Any]],
++) -> dict[str, Any]:
++    """
++    Rows pasted from the Word or Excel allocation form: Course code, Group,
++    Course title, L, P, CF, Lecturer ("Dr. Joseph Omollo (PT)"). A lecturer
++    not on the department's list yet is added to it.
++    """
++    ctx = context(generator, identity, department_code, term_id)
++    _require_allocate(ctx)
++    _require_open(db, ctx)
++    created = updated = lecturers_added = 0
++    errors: list[dict[str, Any]] = []
++    for line, raw in enumerate(rows, start=1):
++        r = _clean(raw)
++        try:
++            unit = r.get("course_code") or r.get("unit_code") or r.get("code")
++            if not unit:
++                raise ValueError("course code is required")
++            # "COSC 103 Group A" / "COSC 103 GR A" in one cell, as on the Word form.
++            group = r.get("group") or ""
++            match = re.search(r"\s+(?:GROUP|GRP|GR\.?)\s*([A-Z]\d?)\s*$", unit, re.IGNORECASE)
++            if match and not group:
++                group = f"GR {match.group(1).upper()}"
++                unit = unit[: match.start()].strip()
++            elif group and not group.upper().startswith("GR"):
++                group = f"GR {group.upper()}"
++            lecturer_id = None
++            name_cell = r.get("lecturer")
++            if name_cell:
++                title, name, kind = split_name(name_cell)
++                lecturer = _find_lecturer(db, _code(ctx), r.get("staff_number"), name)
++                if lecturer is None:
++                    lecturer = create_lecturer(
++                        db,
++                        identity,
++                        ctx,
++                        {
++                            "title": title,
++                            "full_name": name,
++                            "employment_type": kind.value,
++                            "phone": r.get("phone_no") or r.get("phone") or "",
++                        },
++                        commit=False,
++                    )
++                    lecturers_added += 1
++                lecturer_id = str(lecturer.id)
++            existed = db.scalar(
++                select(FormEntry).where(
++                    FormEntry.generator_term_id == ctx.term["id"], FormEntry.key == form_key(unit, group)
++                )
++            )
++            fields = {
++                "unit_code": unit,
++                "group_label": group,
++                "unit_title": r.get("course_title") or r.get("unit_title") or r.get("title"),
++                "lecturer_id": lecturer_id,
++                "lecture_hours": _number(r.get("l") or r.get("lecture_hours"), "L"),
++                "practical_hours": _number(r.get("p") or r.get("practical_hours"), "P"),
++                "cf_hours": _number(r.get("cf") or r.get("cf_hours"), "CF"),
++            }
++            # Hours left blank on a pasted row keep what was entered before.
++            fields = {k: v for k, v in fields.items() if v is not None or not k.endswith("_hours")}
++            save_entry(
++                db, generator, identity, department_code, ctx.term["id"], fields, ctx=ctx, commit=False
++            )
++            if existed is None:
++                created += 1
++            else:
++                updated += 1
++        except (ValueError, ApiError) as exc:
++            errors.append({"line": line, "message": getattr(exc, "message", None) or str(exc)})
++    db.commit()
++    return {
++        "created": created,
++        "updated": updated,
++        "lecturers_added": lecturers_added,
++        "errors": errors[:200],
++        "error_count": len(errors),
++    }
++
++
++def sort_meetings(meetings: list[dict[str, str]]) -> list[dict[str, str]]:
++    return sorted(meetings, key=lambda m: (DAY_ORDER.get(m["day_of_week"], 9), m["start_time"]))
+diff --git a/backend/app/services/form_export.py b/backend/app/services/form_export.py
+new file mode 100644
+index 0000000..058b58b
+--- /dev/null
++++ b/backend/app/services/form_export.py
+@@ -0,0 +1,265 @@
++"""
++The department's allocation form as PDF, Word and Excel, laid out like the
++Word form departments send today:
++
++    THARAKA UNIVERSITY
++    DEPARTMENT OF COMPUTER SCIENCE AND ICT
++    SEPTEMBER - DECEMBER 2026 COURSE ALLOCATION
++
++    BSC.COMP SCI Y1S1 (120 Students)
++    Course code | Course title | L | P | CF | Lecturer (FT/PT) | Phone
++    ...
++    TOTAL                        L   P   CF
++
++    SERVICING FOR OTHER DEPARTMENTS
++    ...
++    Prepared by: <name>, COD
++
++Phone numbers are printed only here, on the department's own download.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from io import BytesIO
++from typing import Any
++from xml.sax.saxutils import escape
++
++UNIVERSITY = "THARAKA UNIVERSITY"
++HEADERS = ["Course code", "Course title", "L", "P", "CF", "Lecturer (FT/PT)", "Phone"]
++
++
++@dataclass
++class Block:
++    heading: str
++    rows: list[list[str]] = field(default_factory=list)
++    totals: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
++
++
++@dataclass
++class Layout:
++    title_lines: list[str]
++    own: list[Block]
++    servicing: list[Block]
++    prepared_by: str
++
++
++def _h(value: float | None) -> str:
++    return "" if value is None else f"{value:g}"
++
++
++def layout(board: dict[str, Any], prepared_by: str) -> Layout:
++    term = board["term"]
++    term_name = str(term.get("name") or term.get("label") or "").upper()
++    title = [UNIVERSITY, str(board["department"]["name"]).upper(), f"{term_name} COURSE ALLOCATION".strip()]
++    phones = {lec["id"]: lec.get("phone") or "" for lec in board.get("lecturers") or []}
++    own: dict[str, Block] = {}
++    servicing: dict[str, Block] = {}
++    for row in board["rows"]:
++        class_rows = row["class_rows"] or [{"label": "Other units", "students": None}]
++        first = class_rows[0]
++        heading = first["label"] + (f" ({first['students']} Students)" if first.get("students") else "")
++        target = servicing if row["servicing"] else own
++        block = target.setdefault(heading, Block(heading))
++        entry = row["entry"] or {}
++        unit = f"{row['unit_code']} {row['group']}".strip()
++        others = [r["label"] for r in class_rows[1:]]
++        unit_title = row["unit_title"] + (f" (with {', '.join(others)})" if others else "")
++        hours = [entry.get("lecture_hours"), entry.get("practical_hours"), entry.get("cf_hours")]
++        block.rows.append(
++            [
++                unit,
++                unit_title,
++                *[_h(h) for h in hours],
++                entry.get("lecturer") or "To be allocated",
++                phones.get(entry.get("lecturer_id") or "", ""),
++            ]
++        )
++        for i, h in enumerate(hours):
++            block.totals[i] += float(h or 0)
++    return Layout(
++        title,
++        sorted(own.values(), key=lambda b: b.heading),
++        sorted(servicing.values(), key=lambda b: b.heading),
++        prepared_by,
++    )
++
++
++def _sections(doc: Layout) -> list[tuple[str | None, list[Block]]]:
++    out: list[tuple[str | None, list[Block]]] = [(None, doc.own)]
++    if doc.servicing:
++        out.append(("SERVICING FOR OTHER DEPARTMENTS", doc.servicing))
++    return out
++
++
++def _total_row(block: Block) -> list[str]:
++    return ["TOTAL", "", *[_h(t) for t in block.totals], "", ""]
++
++
++# -- PDF --------------------------------------------------------------------------------
++
++
++def build_pdf(doc: Layout) -> bytes:
++    from reportlab.lib import colors
++    from reportlab.lib.pagesizes import A4
++    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
++    from reportlab.lib.units import mm
++    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
++
++    styles = getSampleStyleSheet()
++    cell = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=8, leading=10)
++    title = ParagraphStyle("title", parent=styles["Title"], fontSize=12, leading=15, spaceAfter=0)
++    heading = ParagraphStyle("heading", parent=styles["Heading4"], spaceBefore=8, spaceAfter=4)
++    section = ParagraphStyle("section", parent=styles["Heading3"], spaceBefore=12)
++
++    story: list[Any] = [Paragraph(escape(line), title) for line in doc.title_lines]
++    story.append(Spacer(1, 6 * mm))
++    widths = [28 * mm, 54 * mm, 9 * mm, 9 * mm, 9 * mm, 51 * mm, 24 * mm]
++    for name, blocks in _sections(doc):
++        if name:
++            story.append(Paragraph(name, section))
++        for block in blocks:
++            story.append(Paragraph(escape(block.heading), heading))
++            data = (
++                [HEADERS]
++                + [[Paragraph(escape(c), cell) for c in r] for r in block.rows]
++                + [_total_row(block)]
++            )
++            table = Table(data, colWidths=widths, repeatRows=1)
++            table.setStyle(
++                TableStyle(
++                    [
++                        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
++                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
++                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
++                        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
++                        ("FONTSIZE", (0, 0), (-1, -1), 8),
++                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
++                    ]
++                )
++            )
++            story.append(table)
++    if not doc.own and not doc.servicing:
++        story.append(Paragraph("No units allocated yet.", cell))
++    story.append(Spacer(1, 10 * mm))
++    story.append(Paragraph(escape(f"Prepared by: {doc.prepared_by}, COD"), styles["BodyText"]))
++    out = BytesIO()
++    SimpleDocTemplate(
++        out,
++        pagesize=A4,
++        leftMargin=12 * mm,
++        rightMargin=12 * mm,
++        topMargin=12 * mm,
++        bottomMargin=12 * mm,
++        title=doc.title_lines[-1],
++    ).build(story)
++    return out.getvalue()
++
++
++# -- Word -------------------------------------------------------------------------------
++
++
++def build_docx(doc: Layout) -> bytes:
++    from docx import Document
++    from docx.enum.text import WD_ALIGN_PARAGRAPH
++    from docx.shared import Cm, Pt
++
++    word = Document()
++    for s in word.sections:
++        s.left_margin = s.right_margin = Cm(1.5)
++        s.top_margin = s.bottom_margin = Cm(1.5)
++    word.styles["Normal"].font.size = Pt(9)
++    for line in doc.title_lines:
++        p = word.add_paragraph()
++        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
++        run = p.add_run(line)
++        run.bold = True
++        run.font.size = Pt(12)
++    widths = [Cm(2.6), Cm(5.6), Cm(0.9), Cm(0.9), Cm(0.9), Cm(4.8), Cm(2.4)]
++    for name, blocks in _sections(doc):
++        if name:
++            p = word.add_paragraph()
++            run = p.add_run(name)
++            run.bold = True
++            run.font.size = Pt(11)
++        for block in blocks:
++            word.add_paragraph().add_run(block.heading).bold = True
++            table = word.add_table(rows=len(block.rows) + 2, cols=len(HEADERS))
++            table.style = "Table Grid"
++            all_rows = [HEADERS, *block.rows, _total_row(block)]
++            for r, values in enumerate(all_rows):
++                cells = table.rows[r].cells
++                for c, value in enumerate(values):
++                    cells[c].text = value
++                    cells[c].width = widths[c]
++                    if r in (0, len(all_rows) - 1):
++                        for run in cells[c].paragraphs[0].runs:
++                            run.bold = True
++            for c, w in enumerate(widths):
++                table.columns[c].width = w
++    if not doc.own and not doc.servicing:
++        word.add_paragraph("No units allocated yet.")
++    word.add_paragraph()
++    word.add_paragraph(f"Prepared by: {doc.prepared_by}, COD")
++    out = BytesIO()
++    word.save(out)
++    return out.getvalue()
++
++
++# -- Excel ------------------------------------------------------------------------------
++
++
++def build_xlsx(doc: Layout) -> bytes:
++    from openpyxl import Workbook
++    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
++
++    book = Workbook()
++    sheet = book.active
++    assert sheet is not None
++    sheet.title = "Allocation"
++    thin = Side(style="thin", color="999999")
++    border = Border(left=thin, right=thin, top=thin, bottom=thin)
++    fill = PatternFill("solid", fgColor="E2E8F0")
++    for i, w in enumerate([14, 44, 6, 6, 6, 34, 16], start=1):
++        sheet.column_dimensions[chr(64 + i)].width = w
++    r = 1
++    for line in doc.title_lines:
++        sheet.cell(r, 1, line).font = Font(bold=True, size=12)
++        sheet.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(HEADERS))
++        sheet.cell(r, 1).alignment = Alignment(horizontal="center")
++        r += 1
++    r += 1
++    for name, blocks in _sections(doc):
++        if name:
++            sheet.cell(r, 1, name).font = Font(bold=True, size=11)
++            r += 2
++        for block in blocks:
++            sheet.cell(r, 1, block.heading).font = Font(bold=True)
++            r += 1
++            for values, bold in [
++                (HEADERS, True),
++                *[(row, False) for row in block.rows],
++                (_total_row(block), True),
++            ]:
++                for c, value in enumerate(values, start=1):
++                    number = c in (3, 4, 5) and value not in ("", "L", "P", "CF")
++                    cell = sheet.cell(r, c, float(value) if number else value)
++                    cell.border = border
++                    cell.font = Font(bold=bold)
++                    cell.alignment = Alignment(wrap_text=True, vertical="top")
++                    if values is HEADERS:
++                        cell.fill = fill
++                r += 1
++            r += 1
++    sheet.cell(r + 1, 1, f"Prepared by: {doc.prepared_by}, COD")
++    out = BytesIO()
++    book.save(out)
++    return out.getvalue()
++
++
++BUILDERS = {"pdf": build_pdf, "docx": build_docx, "xlsx": build_xlsx}
++MEDIA = {
++    "pdf": "application/pdf",
++    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
++    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++}
+diff --git a/backend/pyproject.toml b/backend/pyproject.toml
+index d5c48a4..293f7bc 100644
+--- a/backend/pyproject.toml
++++ b/backend/pyproject.toml
+@@ -13,6 +13,8 @@ dependencies = [
+     "pydantic-settings>=2.6,<3",
+     "httpx>=0.28,<1",
+     "reportlab>=4.2,<5",
++    "python-docx>=1.1,<2",
++    "openpyxl>=3.1,<4",
+ ]
+ 
+ [project.optional-dependencies]
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+index e151942..1d4ade5 100644
+--- a/backend/tests/conftest.py
++++ b/backend/tests/conftest.py
+@@ -8,13 +8,16 @@ import pytest
+ os.environ.setdefault("ENVIRONMENT", "test")
+ os.environ.setdefault("COOKIE_SECURE", "false")
+ os.environ.setdefault("SMARTTT_API_KEY", "test-allocator-key")
++os.environ.setdefault("GENERATOR_API_KEY", "test-generator-key")
+ 
+ from fastapi.testclient import TestClient
+ from sqlalchemy.orm import Session
+ 
++from app.clients.generator import GeneratorClient, set_generator
+ from app.clients.smarttt import SmartttClient, set_smarttt
+ from app.config import get_settings
+ from app.db import Base, get_engine, get_sessionmaker
++from tests.fake_generator import FakeGenerator
+ from tests.fake_smarttt import FakeSmarttt
+ 
+ 
+@@ -42,6 +45,16 @@ def smarttt() -> Iterator[FakeSmarttt]:
+     client.close()
+ 
+ 
++@pytest.fixture
++def generator() -> Iterator[FakeGenerator]:
++    fake = FakeGenerator()
++    client = GeneratorClient(get_settings(), transport=fake.transport())
++    set_generator(client)
++    yield fake
++    set_generator(None)
++    client.close()
++
++
+ @pytest.fixture
+ def db() -> Iterator[Session]:
+     session = get_sessionmaker()()
+diff --git a/backend/tests/fake_generator.py b/backend/tests/fake_generator.py
+new file mode 100644
+index 0000000..23b5803
+--- /dev/null
++++ b/backend/tests/fake_generator.py
+@@ -0,0 +1,106 @@
++"""A stand-in for the Timetable Generator's /api/integrations/allocator endpoints."""
++
++from __future__ import annotations
++
++from typing import Any
++
++import httpx
++
++TERM = "term-1"
++CS_DEPT = {"id": 100001, "code": "CS", "name": "Computer Science", "smarttt_id": None}
++ED_DEPT = {"id": 100002, "code": "ED", "name": "Education", "smarttt_id": None}
++
++
++def _section(
++    unit: str,
++    group: str,
++    name: str,
++    department: dict[str, Any],
++    rows: list[tuple[str, int, dict[str, Any]]],
++    meetings: list[tuple[str, str, str, str]],
++) -> dict[str, Any]:
++    key = f"{unit.replace(' ', '')}-{group.replace(' ', '') or 'MAIN'}"
++    return {
++        "key": key,
++        "unit_code": unit,
++        "unit_name": name,
++        "group": group,
++        "department": department,
++        "students": sum(r[1] for r in rows),
++        "weekly_hours": 3,
++        "class_rows": [
++            {
++                "label": label,
++                "program_code": label,
++                "study_year": 1,
++                "study_semester": 1,
++                "students": n,
++                "department": {"code": d["code"], "name": d["name"]},
++            }
++            for label, n, d in rows
++        ],
++        "meetings": [
++            {"day_of_week": d, "start_time": s, "end_time": e, "room": r} for d, s, e, r in meetings
++        ],
++    }
++
++
++class FakeGenerator:
++    def __init__(self) -> None:
++        self.key = "test-generator-key"
++        self.terms = [
++            {"id": TERM, "name": "September - December 2026", "academic_year": "2026/2027", "semester": 1}
++        ]
++        self.published_version: int | None = 1
++        self.sections = [
++            _section(
++                "COSC 103",
++                "GR A",
++                "Intro to Programming",
++                CS_DEPT,
++                [("BSC.CS Y1S1", 60, CS_DEPT)],
++                [("TUE", "10:00", "12:00", "STB 1")],
++            ),
++            _section(
++                "COSC 103",
++                "GR B",
++                "Intro to Programming",
++                CS_DEPT,
++                [("BED.SCI Y1S1", 50, ED_DEPT)],
++                [("TUE", "11:00", "13:00", "STB 2")],
++            ),
++            _section(
++                "COSC 200",
++                "",
++                "Data Structures",
++                CS_DEPT,
++                [("BSC.CS Y2S1", 40, CS_DEPT)],
++                [("WED", "08:00", "11:00", "UTC 1")],
++            ),
++            _section(
++                "EDFO 111",
++                "",
++                "Foundations of Education",
++                ED_DEPT,
++                [("BED.SCI Y1S1", 80, ED_DEPT)],
++                [("MON", "08:00", "10:00", "ED 1")],
++            ),
++        ]
++
++    def transport(self) -> httpx.MockTransport:
++        return httpx.MockTransport(self.handle)
++
++    def handle(self, request: httpx.Request) -> httpx.Response:
++        if request.headers.get("X-API-Key") != self.key:
++            return httpx.Response(401, json={"success": False})
++        path = request.url.path.removeprefix("/api/integrations/allocator")
++        if path == "/terms":
++            return httpx.Response(200, json={"success": True, "data": self.terms})
++        if path == f"/terms/{TERM}/sections":
++            data = {
++                "term": self.terms[0],
++                "published_version": self.published_version,
++                "sections": self.sections,
++            }
++            return httpx.Response(200, json={"success": True, "data": data})
++        return httpx.Response(404, json={"success": False})
+diff --git a/backend/tests/test_form.py b/backend/tests/test_form.py
+new file mode 100644
+index 0000000..a2b696d
+--- /dev/null
++++ b/backend/tests/test_form.py
+@@ -0,0 +1,97 @@
++from __future__ import annotations
++
++from sqlalchemy import select
++
++from app.models import FormEntry, Lecturer
++from tests.conftest import sign_in
++
++
++def _add_lecturer(client, name, **extra):
++    response = client.post("/api/form/CS/lecturers", json={"full_name": name, "title": "Dr.", **extra})
++    assert response.status_code == 200, response.text
++    return response.json()["data"]["id"]
++
++
++def _save(client, unit, group="", **fields):
++    return client.put("/api/form/CS/entries", json={"unit_code": unit, "group_label": group, **fields})
++
++
++def test_board_lists_the_departments_units_from_the_generator(client, generator):
++    sign_in(client, "STF/0100")
++    body = client.get("/api/form/CS").json()["data"]
++    assert [(r["unit_code"], r["group"]) for r in body["rows"]] == [
++        ("COSC 103", "GR A"),
++        ("COSC 103", "GR B"),
++        ("COSC 200", ""),
++    ]
++    assert body["rows"][1]["servicing"] is True  # Education's students
++    assert body["rows"][0]["servicing"] is False
++    assert body["can_edit"] is True and body["can_submit"] is True
++
++
++def test_other_departments_forms_are_closed(client, generator):
++    sign_in(client, "STF/0100")
++    assert client.get("/api/form/ED").status_code == 403
++    response = _save(client, "EDFO 111", lecture_hours=3)
++    assert response.status_code == 403
++    assert response.json()["error"]["code"] == "NOT_YOUR_UNIT"
++
++
++def test_allocate_and_refuse_a_clash(client, generator, db):
++    sign_in(client, "STF/0101")  # an editor
++    jane = _add_lecturer(client, "Jane Otieno", staff_number="stf/9", phone="0700")
++    assert _save(client, "COSC 103", "GR A", lecturer_id=jane, lecture_hours=2, cf_hours=3).status_code == 200
++    clash = _save(client, "COSC 103", "GR B", lecturer_id=jane)
++    assert clash.status_code == 409
++    assert "already teaches COSC 103 GR A" in clash.json()["error"]["message"]
++    assert _save(client, "COSC 200", lecturer_id=jane).status_code == 200
++    entry = db.scalar(select(FormEntry).where(FormEntry.key == "COSC103-GRA"))
++    assert entry is not None and float(entry.cf_hours) == 3
++    assert db.scalar(select(Lecturer)).staff_number == "STF/9"
++
++
++def test_split_unit_needs_its_group_and_new_units_need_a_title(client, generator):
++    sign_in(client, "STF/0100")
++    assert _save(client, "COSC 103").json()["error"]["code"] == "GROUP_REQUIRED"
++    assert _save(client, "COSC 499").status_code == 422
++    added = _save(client, "COSC 499", unit_title="Project", lecture_hours=1)
++    assert added.status_code == 200
++    assert added.json()["data"]["in_timetable"] is False
++
++
++def test_bulk_paste_adds_lecturers_and_rows(client, generator, db):
++    sign_in(client, "STF/0100")
++    rows = [
++        {"Course code": "COSC 103 Group A", "L": "3", "CF": "3", "Lecturer": "Dr. Joseph Omollo (PT)"},
++        {"Course code": "COSC 200", "Lecturer": "Joseph Omollo"},
++        {"Course code": "COSC 999"},
++    ]
++    body = client.post("/api/form/CS/entries/bulk", json={"rows": rows}).json()["data"]
++    assert body["created"] == 2 and body["lecturers_added"] == 1
++    assert body["errors"][0]["line"] == 3
++    lecturer = db.scalar(select(Lecturer))
++    assert lecturer.full_name == "Joseph Omollo" and lecturer.employment_type.value == "part_time"
++
++
++def test_submit_locks_until_reopened_and_downloads_work(client, generator):
++    sign_in(client, "STF/0100")
++    jane = _add_lecturer(client, "Jane Otieno")
++    _save(client, "COSC 200", lecturer_id=jane, lecture_hours=3)
++    assert client.post("/api/form/CS/submit").status_code == 200
++    assert _save(client, "COSC 103", "GR A", lecturer_id=jane).json()["error"]["code"] == "FORM_SUBMITTED"
++    for fmt, magic in (("pdf", b"%PDF"), ("docx", b"PK"), ("xlsx", b"PK")):
++        response = client.get(f"/api/form/CS/export.{fmt}")
++        assert response.status_code == 200 and response.content.startswith(magic)
++    assert client.post("/api/form/CS/reopen").status_code == 200
++    assert _save(client, "COSC 103", "GR A", lecturer_id=jane).status_code == 200
++
++
++def test_editors_cannot_submit_and_director_sees_progress(client, generator):
++    sign_in(client, "STF/0101")
++    assert client.post("/api/form/CS/submit").status_code == 403
++    client.post("/api/auth/logout")
++    client.headers.pop("X-XSRF-TOKEN", None)
++    sign_in(client, "STF/0102")
++    progress = client.get("/api/form/progress").json()["data"]
++    assert {d["code"] for d in progress["departments"]} == {"CS", "ED"}
++    assert client.get("/api/form/CS").json()["data"]["can_edit"] is False
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index e8d7677..0ca877e 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1,10 +1,11 @@
+-import { NavLink, Navigate, Outlet, Route, Routes, useSearchParams } from 'react-router-dom'
++import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
+ import clsx from 'clsx'
+ import { AxiosError } from 'axios'
+ import { errorMessage } from '@/lib/api'
+-import { termText } from '@/lib/format'
+-import { useDepartments, useLogout, useMe, useTerms } from '@/lib/queries'
++import { useLogout, useMe } from '@/lib/queries'
++import { AllocationFormPage } from '@/pages/AllocationFormPage'
+ import { DepartmentPage } from '@/pages/DepartmentPage'
++import { FormProgressPage } from '@/pages/FormProgressPage'
+ import { LoginPage } from '@/pages/LoginPage'
+ import { ProgressPage } from '@/pages/ProgressPage'
+ 
+@@ -18,7 +19,9 @@ export function App() {
+   return (
+     <Routes>
+       <Route element={<Layout />}>
+-        <Route index element={<Home />} />
++        <Route index element={<FormProgressPage />} />
++        <Route path="form/:code" element={<AllocationFormPage />} />
++        {/* The earlier board over SMARTTT's sections, kept for when SMARTTT's allocation endpoints are live. */}
+         <Route path="departments/:departmentId" element={<DepartmentPage />} />
+         <Route path="progress" element={<ProgressPage />} />
+         <Route path="*" element={<Navigate to="/" replace />} />
+@@ -27,21 +30,9 @@ export function App() {
+   )
+ }
+ 
+-function Home() {
+-  const me = useMe()
+-  if (me.data?.timetabling_office) return <Navigate to="/progress" replace />
+-  const first = me.data?.departments[0]
+-  return first ? <Navigate to={`/departments/${first.id}`} replace /> : null
+-}
+-
+ function Layout() {
+   const me = useMe()
+-  const departments = useDepartments()
+-  const terms = useTerms()
+   const logout = useLogout()
+-  const [search, setSearch] = useSearchParams()
+-  const term = search.get('term') ?? ''
+-  const suffix = term ? `?term=${term}` : ''
+ 
+   return (
+     <div className="min-h-screen bg-slate-50 text-slate-900">
+@@ -49,26 +40,12 @@ function Layout() {
+         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3">
+           <span className="font-semibold text-emerald-800">Timetable Allocator</span>
+           <nav className="flex flex-wrap gap-1 text-sm">
+-            {me.data?.timetabling_office && (
+-              <NavLink to={`/progress${suffix}`}
+-                className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
+-                All departments
+-              </NavLink>
+-            )}
+-            {(me.data?.timetabling_office ? [] : departments.data ?? []).map((d) => (
+-              <NavLink key={d.id} to={`/departments/${d.id}${suffix}`}
+-                className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
+-                {d.name}
+-              </NavLink>
+-            ))}
++            <NavLink to="/" end
++              className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
++              Course allocation
++            </NavLink>
+           </nav>
+           <div className="ml-auto flex items-center gap-3 text-sm">
+-            <select aria-label="Term" value={term}
+-              onChange={(e) => setSearch(e.target.value ? { term: e.target.value } : {})}
+-              className="rounded-md border border-slate-300 px-2 py-1">
+-              <option value="">Current term</option>
+-              {terms.data?.map((t) => <option key={t.id} value={t.id}>{termText(t)}</option>)}
+-            </select>
+             <span className="text-slate-600">{me.data?.full_name}</span>
+             <button onClick={() => logout.mutate()} className="text-emerald-700">Sign out</button>
+           </div>
+diff --git a/frontend/src/components/BulkPaste.test.ts b/frontend/src/components/BulkPaste.test.ts
+new file mode 100644
+index 0000000..b7cd369
+--- /dev/null
++++ b/frontend/src/components/BulkPaste.test.ts
+@@ -0,0 +1,25 @@
++import { parseTable, templateCsv } from './BulkPaste'
++
++describe('parseTable', () => {
++  it('reads cells pasted from Excel (tabs) by their header names', () => {
++    const rows = parseTable('Code\tBuilding\tCapacity\tRoom type\nUTC-AB3\tUTC\t120\tLecture hall\nLAB 1\tSTB\t40\tLab\n\n')
++    expect(rows).toEqual([
++      { code: 'UTC-AB3', building: 'UTC', capacity: '120', room_type: 'Lecture hall' },
++      { code: 'LAB 1', building: 'STB', capacity: '40', room_type: 'Lab' },
++    ])
++  })
++
++  it('reads a CSV file with quoted commas', () => {
++    const rows = parseTable('Unit code,Unit title,Class rows\r\nCOSC 103,"Introduction, ICT","BED.ENG/LIT Y1S1 (1); BED.ECDE Y1S1"\r\n')
++    expect(rows).toEqual([{ unit_code: 'COSC 103', unit_title: 'Introduction, ICT', class_rows: 'BED.ENG/LIT Y1S1 (1); BED.ECDE Y1S1' }])
++  })
++
++  it('needs a header row and at least one line', () => {
++    expect(parseTable('Code\tCapacity')).toEqual([])
++  })
++
++  it('round-trips its own template', () => {
++    const csv = templateCsv([{ key: 'code', label: 'Code', example: 'TC 7' }, { key: 'name', label: 'Name', example: 'A, B' }])
++    expect(parseTable(csv)).toEqual([{ code: 'TC 7', name: 'A, B' }])
++  })
++})
+diff --git a/frontend/src/components/BulkPaste.tsx b/frontend/src/components/BulkPaste.tsx
+new file mode 100644
+index 0000000..f734fbc
+--- /dev/null
++++ b/frontend/src/components/BulkPaste.tsx
+@@ -0,0 +1,160 @@
++import { useState } from 'react'
++import { errorMessage } from '@/lib/api'
++import type { BulkResult } from '@/lib/form'
++import { Dialog } from './Dialog'
++
++export interface BulkColumn {
++  key: string
++  label: string
++  example: string
++  required?: boolean
++  hint?: string
++}
++
++/**
++ * Splits text pasted from Excel (tab-separated) or a CSV file (comma-separated,
++ * double quotes allowed) into rows keyed by the header row's column names.
++ */
++export function parseTable(text: string): Record<string, string>[] {
++  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() !== '')
++  if (lines.length < 2) return []
++  const delimiter = lines[0].includes('\t') ? '\t' : ','
++  const split = (line: string): string[] => {
++    if (delimiter === '\t') return line.split('\t')
++    const out: string[] = []
++    let cell = ''
++    let quoted = false
++    for (let i = 0; i < line.length; i++) {
++      const ch = line[i]
++      if (quoted) {
++        if (ch === '"' && line[i + 1] === '"') { cell += '"'; i++ }
++        else if (ch === '"') quoted = false
++        else cell += ch
++      } else if (ch === '"') quoted = true
++      else if (ch === ',') { out.push(cell); cell = '' }
++      else cell += ch
++    }
++    out.push(cell)
++    return out
++  }
++  const header = split(lines[0]).map((h) => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''))
++  return lines.slice(1).map((line) => {
++    const cells = split(line)
++    const row: Record<string, string> = {}
++    header.forEach((h, i) => { if (h) row[h] = (cells[i] ?? '').trim() })
++    return row
++  })
++}
++
++export function templateCsv(columns: BulkColumn[]): string {
++  const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
++  return [columns.map((c) => quote(c.label)).join(','), columns.map((c) => quote(c.example)).join(',')].join('\n') + '\n'
++}
++
++function downloadText(filename: string, text: string) {
++  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }))
++  const a = document.createElement('a')
++  a.href = url
++  a.download = filename
++  a.click()
++  URL.revokeObjectURL(url)
++}
++
++/**
++ * "Paste from Excel": copy a block of cells (with its header
++ * row) from Excel or the Word form, or open a CSV, paste it here, and every line is added or
++ * updated. Bad lines are listed by number and skipped.
++ */
++export function BulkPaste({
++  title,
++  columns,
++  templateName,
++  submit,
++  onClose,
++}: {
++  title: string
++  columns: BulkColumn[]
++  templateName: string
++  submit: (rows: Record<string, string>[]) => Promise<BulkResult>
++  onClose: () => void
++}) {
++  const [text, setText] = useState('')
++  const [result, setResult] = useState<BulkResult | null>(null)
++  const [failure, setFailure] = useState<string | null>(null)
++  const [busy, setBusy] = useState(false)
++  const rows = parseTable(text)
++
++  const send = async () => {
++    setBusy(true)
++    setFailure(null)
++    try {
++      setResult(await submit(rows))
++    } catch (err) {
++      setFailure(errorMessage(err))
++    } finally {
++      setBusy(false)
++    }
++  }
++
++  const readFile = async (file: File | undefined) => {
++    if (file) setText(await file.text())
++  }
++
++  return (
++    <Dialog title={title} onClose={onClose} wide>
++      <p className="text-sm text-slate-600">
++        Copy the cells from Excel <b>including the header row</b> and paste them below, or open a CSV file. Existing rows
++        are updated; new ones are added.
++      </p>
++      <div className="mt-2 overflow-x-auto rounded-md border border-slate-200">
++        <table className="w-full text-left text-xs">
++          <thead className="bg-slate-50 text-slate-500">
++            <tr>{columns.map((c) => <th key={c.key} className="px-2 py-1 font-medium">{c.label}{c.required ? ' *' : ''}</th>)}</tr>
++          </thead>
++          <tbody>
++            <tr>{columns.map((c) => <td key={c.key} className="px-2 py-1 text-slate-600">{c.example}</td>)}</tr>
++          </tbody>
++        </table>
++      </div>
++      {columns.some((c) => c.hint) && (
++        <ul className="mt-2 list-disc pl-5 text-xs text-slate-600">
++          {columns.filter((c) => c.hint).map((c) => <li key={c.key}><b>{c.label}:</b> {c.hint}</li>)}
++        </ul>
++      )}
++      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
++        <button type="button" onClick={() => downloadText(templateName, templateCsv(columns))} className="text-emerald-700">
++          Download the template (CSV)
++        </button>
++        <label className="cursor-pointer text-emerald-700">
++          Open a CSV file
++          <input type="file" accept=".csv,text/csv,text/plain" className="sr-only" onChange={(e) => void readFile(e.target.files?.[0])} />
++        </label>
++      </div>
++      <textarea value={text} onChange={(e) => { setText(e.target.value); setResult(null) }} rows={10} aria-label="Pasted rows"
++        placeholder={columns.map((c) => c.label).join('\t')}
++        className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1 font-mono text-xs" />
++      <p className="text-xs text-slate-500">{rows.length} rows read.</p>
++      {failure && <p role="alert" className="text-sm text-red-700">{failure}</p>}
++      {result && (
++        <div className="mt-2 rounded-md bg-slate-50 p-2 text-sm">
++          <p className="text-emerald-800">{result.created} added, {result.updated} updated.</p>
++          {result.error_count > 0 && (
++            <>
++              <p className="text-red-700">{result.error_count} rows skipped:</p>
++              <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-red-700">
++                {result.errors.map((e) => <li key={e.line}>Row {e.line}: {e.message}</li>)}
++              </ul>
++            </>
++          )}
++        </div>
++      )}
++      <div className="mt-4 flex justify-end gap-2">
++        <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-2 text-sm">Close</button>
++        <button type="button" onClick={() => void send()} disabled={!rows.length || busy}
++          className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50">
++          {busy ? 'Saving…' : `Save ${rows.length} rows`}
++        </button>
++      </div>
++    </Dialog>
++  )
++}
+diff --git a/frontend/src/components/Dialog.tsx b/frontend/src/components/Dialog.tsx
+new file mode 100644
+index 0000000..a22dca8
+--- /dev/null
++++ b/frontend/src/components/Dialog.tsx
+@@ -0,0 +1,26 @@
++import type { ReactNode } from 'react'
++import clsx from 'clsx'
++
++export function Dialog({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
++  return (
++    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 px-4"
++      onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}>
++      <div className={clsx('max-h-[90vh] w-full overflow-y-auto rounded-xl bg-white p-5 shadow-xl', wide ? 'max-w-4xl' : 'max-w-xl')}>
++        <h2 className="text-lg font-semibold">{title}</h2>
++        {children}
++      </div>
++    </div>
++  )
++}
++
++export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
++  return (
++    <label className="block text-sm">
++      <span className="font-medium text-slate-700">{label}</span>
++      {children}
++      {hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
++    </label>
++  )
++}
++
++export const inputClass = 'mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5'
+diff --git a/frontend/src/lib/form.ts b/frontend/src/lib/form.ts
+new file mode 100644
+index 0000000..013a020
+--- /dev/null
++++ b/frontend/src/lib/form.ts
+@@ -0,0 +1,180 @@
++/**
++ * The allocation form: units and groups come from the Timetable Generator,
++ * each department keeps its own lecturer list and fills in the lecturer and
++ * L / P / CF hours for every unit (or group), then downloads it.
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
++import { api, get } from './api'
++import type { DepartmentRoleName, EmploymentType } from './types'
++
++export interface GeneratorTerm {
++  id: string
++  name: string
++  academic_year?: string | null
++  semester?: number | null
++  published_version?: number | null
++}
++
++export interface FormMeeting {
++  day_of_week: string
++  start_time: string
++  end_time: string
++  room: string
++}
++
++export interface FormEntry {
++  id: string
++  lecturer_id: string | null
++  lecturer: string | null
++  lecture_hours: number | null
++  practical_hours: number | null
++  cf_hours: number | null
++  entered_by: string
++  entered_at: string
++}
++
++export interface FormRow {
++  key: string
++  unit_code: string
++  unit_title: string
++  group: string
++  class_rows: { label: string; students: number | null; department_code: string | null }[]
++  students: number | null
++  weekly_hours: number | null
++  meetings: FormMeeting[]
++  servicing: boolean
++  in_timetable: boolean
++  entry: FormEntry | null
++  problems: { code: string; message: string }[]
++}
++
++export interface FormLecturer {
++  id: string
++  department_code: string
++  title: string
++  full_name: string
++  staff_number: string | null
++  employment_type: EmploymentType
++  phone: string
++  email: string
++  max_weekly_hours: number | null
++  active: boolean
++}
++
++export interface BoardLecturer extends FormLecturer {
++  display: string
++  classes: number
++  weekly_hours: number
++  lecture_hours: number
++  practical_hours: number
++}
++
++export interface FormBoard {
++  term: GeneratorTerm
++  published_version: number | null
++  department: { code: string; name: string }
++  role: DepartmentRoleName | null
++  can_edit: boolean
++  can_submit: boolean
++  rows: FormRow[]
++  summary: { classes: number; allocated: number; not_in_timetable: number; problems: number }
++  lecturers: BoardLecturer[]
++  submission: { submitted_by: string; submitted_at: string; entry_count: number; allocated_count: number } | null
++}
++
++export interface FormProgressRow {
++  code: string
++  name: string
++  role: DepartmentRoleName | null
++  classes: number
++  allocated: number
++  submitted_at: string | null
++  submitted_by: string | null
++}
++
++export interface BulkResult {
++  created: number
++  updated: number
++  lecturers_added?: number
++  errors: { line: number; message: string }[]
++  error_count: number
++}
++
++export interface EntryInput {
++  unit_code: string
++  group_label: string
++  unit_title?: string
++  lecturer_id: string | null
++  lecture_hours: number | null
++  practical_hours: number | null
++  cf_hours: number | null
++}
++
++export type LecturerInput = Omit<FormLecturer, 'id' | 'department_code'>
++
++const params = (term: string | undefined) => (term ? { term } : undefined)
++const dept = (code: string) => encodeURIComponent(code)
++
++export const formKeys = {
++  terms: ['generator-terms'] as const,
++  progress: (term: string | undefined) => ['form-progress', term] as const,
++  board: (code: string, term: string | undefined) => ['form', code, term] as const,
++}
++
++export const useGeneratorTerms = () =>
++  useQuery({ queryKey: formKeys.terms, queryFn: () => get<GeneratorTerm[]>('/generator/terms') })
++
++export const useFormProgress = (term: string | undefined) =>
++  useQuery({
++    queryKey: formKeys.progress(term),
++    queryFn: () => get<{ term: GeneratorTerm; departments: FormProgressRow[] }>('/form/progress', params(term)),
++  })
++
++export const useFormBoard = (code: string, term: string | undefined) =>
++  useQuery({ queryKey: formKeys.board(code, term), queryFn: () => get<FormBoard>(`/form/${dept(code)}`, params(term)) })
++
++function useFormMutation<TVars, TResult>(code: string, fn: (vars: TVars) => Promise<TResult>) {
++  const qc = useQueryClient()
++  return useMutation({
++    mutationFn: fn,
++    onSettled: () => {
++      void qc.invalidateQueries({ queryKey: ['form', code] })
++      void qc.invalidateQueries({ queryKey: ['form-progress'] })
++    },
++  })
++}
++
++export const useSaveEntry = (code: string, term: string | undefined) =>
++  useFormMutation(code, (body: EntryInput) =>
++    api.put<FormRow>(`/form/${dept(code)}/entries`, body, { params: params(term) }).then((r) => r.data))
++
++export const useDeleteEntry = (code: string, term: string | undefined) =>
++  useFormMutation(code, (id: string) =>
++    api.delete(`/form/${dept(code)}/entries/${id}`, { params: params(term) }).then(() => null))
++
++export const useBulkEntries = (code: string, term: string | undefined) =>
++  useFormMutation(code, (rows: Record<string, string>[]) =>
++    api.post<BulkResult>(`/form/${dept(code)}/entries/bulk`, { rows }, { params: params(term) }).then((r) => r.data))
++
++export const useSubmitForm = (code: string, term: string | undefined) =>
++  useFormMutation(code, (action: 'submit' | 'reopen') =>
++    api.post<FormBoard>(`/form/${dept(code)}/${action}`, null, { params: params(term) }).then((r) => r.data))
++
++export const useSaveLecturer = (code: string) =>
++  useFormMutation(code, ({ id, body }: { id?: string; body: Partial<LecturerInput> }) =>
++    (id
++      ? api.patch<FormLecturer>(`/form/${dept(code)}/lecturers/${id}`, body)
++      : api.post<FormLecturer>(`/form/${dept(code)}/lecturers`, body)
++    ).then((r) => r.data))
++
++export const useDeleteLecturer = (code: string) =>
++  useFormMutation(code, (id: string) => api.delete(`/form/${dept(code)}/lecturers/${id}`).then(() => null))
++
++export const useBulkLecturers = (code: string) =>
++  useFormMutation(code, (rows: Record<string, string>[]) =>
++    api.post<BulkResult>(`/form/${dept(code)}/lecturers/bulk`, { rows }).then((r) => r.data))
++
++export const formExportUrl = (code: string, format: 'pdf' | 'docx' | 'xlsx', term: string | undefined) =>
++  `${import.meta.env.VITE_API_URL ?? '/api'}/form/${dept(code)}/export.${format}${term ? `?term=${encodeURIComponent(term)}` : ''}`
++
++export const employmentShort = (t: EmploymentType) => (t === 'part_time' ? 'PT' : 'FT')
+diff --git a/frontend/src/pages/AllocationFormPage.tsx b/frontend/src/pages/AllocationFormPage.tsx
+new file mode 100644
+index 0000000..bb5959e
+--- /dev/null
++++ b/frontend/src/pages/AllocationFormPage.tsx
+@@ -0,0 +1,431 @@
++import { useState, type FormEvent } from 'react'
++import { Link, useParams, useSearchParams } from 'react-router-dom'
++import clsx from 'clsx'
++import { Download } from 'lucide-react'
++import { BulkPaste, type BulkColumn } from '@/components/BulkPaste'
++import { Dialog, Field, inputClass } from '@/components/Dialog'
++import { errorMessage } from '@/lib/api'
++import {
++  employmentShort,
++  formExportUrl,
++  useBulkEntries,
++  useBulkLecturers,
++  useDeleteEntry,
++  useDeleteLecturer,
++  useFormBoard,
++  useGeneratorTerms,
++  useSaveEntry,
++  useSaveLecturer,
++  useSubmitForm,
++  type BoardLecturer,
++  type FormBoard,
++  type FormRow,
++  type LecturerInput,
++} from '@/lib/form'
++
++const ENTRY_COLUMNS: BulkColumn[] = [
++  { key: 'course_code', label: 'Course code', example: 'COSC 103', required: true,
++    hint: 'A group can be in the same cell ("COSC 103 Group A") or in the Group column.' },
++  { key: 'group', label: 'Group', example: 'A' },
++  { key: 'course_title', label: 'Course title', example: 'Introduction to Programming',
++    hint: 'Only needed for a unit that is not in the timetable yet.' },
++  { key: 'l', label: 'L', example: '3' },
++  { key: 'p', label: 'P', example: '' },
++  { key: 'cf', label: 'CF', example: '3' },
++  { key: 'lecturer', label: 'Lecturer', example: 'Dr. Jane Otieno (FT)',
++    hint: 'As written on the Word form. A lecturer not on your list yet is added to it.' },
++]
++
++const LECTURER_COLUMNS: BulkColumn[] = [
++  { key: 'name', label: 'Name', example: 'Dr. Jane Otieno (FT)', required: true },
++  { key: 'staff_number', label: 'Staff number', example: 'TUN/STF/0123',
++    hint: 'Used to recognise the same lecturer on another department\'s list and in SMARTTT.' },
++  { key: 'phone', label: 'Phone', example: '07…' },
++  { key: 'email', label: 'Email', example: 'jane@tharaka.ac.ke' },
++  { key: 'max_hours', label: 'Max hours', example: '18', hint: 'Weekly teaching hours. Leave blank for no limit.' },
++]
++
++const hours = (v: number | null | undefined) => (v == null ? '' : String(v))
++const toNumber = (v: string) => (v.trim() === '' ? null : Number(v))
++
++/** One department's allocation form: units (from the Timetable Generator) and the department's own lecturers. */
++export function AllocationFormPage() {
++  const { code = '' } = useParams()
++  const [search, setSearch] = useSearchParams()
++  const term = search.get('term') || undefined
++  const tab = search.get('tab') === 'lecturers' ? 'lecturers' : 'units'
++  const terms = useGeneratorTerms()
++  const board = useFormBoard(code, term)
++  const submit = useSubmitForm(code, term)
++
++  const setParam = (key: string, value: string | null) => {
++    const next = new URLSearchParams(search)
++    if (value) next.set(key, value)
++    else next.delete(key)
++    setSearch(Object.fromEntries(next))
++  }
++
++  if (board.isPending) return <p className="text-sm text-slate-500">Loading the allocation form…</p>
++  if (board.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(board.error)}</p>
++  const data = board.data
++
++  return (
++    <div className="space-y-4">
++      <div className="flex flex-wrap items-start justify-between gap-3">
++        <div>
++          <h1 className="text-xl font-semibold">{data.department.name}</h1>
++          <p className="text-sm text-slate-600">
++            {data.term.name} course allocation · {data.summary.allocated} of {data.summary.classes} classes allocated
++            {data.published_version == null && ' · timetable not published yet (no clash checks until it is)'}
++          </p>
++        </div>
++        <div className="flex flex-wrap items-center gap-2 text-sm">
++          <select aria-label="Term" value={term ?? ''} onChange={(e) => setParam('term', e.target.value || null)}
++            className="rounded-md border border-slate-300 px-2 py-2">
++            <option value="">Latest term</option>
++            {terms.data?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
++          </select>
++          {([['pdf', 'PDF'], ['docx', 'Word'], ['xlsx', 'Excel']] as const).map(([format, label]) => (
++            <a key={format} href={formExportUrl(code, format, term)}
++              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-2">
++              <Download size={16} /> {label}
++            </a>
++          ))}
++          {data.can_submit && (
++            data.submission ? (
++              <button onClick={() => submit.mutate('reopen')} disabled={submit.isPending}
++                className="rounded-md border border-slate-300 bg-white px-3 py-2">Reopen</button>
++            ) : (
++              <button onClick={() => submit.mutate('submit')} disabled={submit.isPending}
++                className="rounded-md bg-emerald-700 px-4 py-2 font-medium text-white disabled:opacity-50">Submit</button>
++            )
++          )}
++        </div>
++      </div>
++
++      {data.submission && (
++        <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
++          Submitted by {data.submission.submitted_by} on {new Date(data.submission.submitted_at).toLocaleString()}.
++          {data.can_submit ? ' Reopen it to make changes.' : ' The COD can reopen it.'}
++        </p>
++      )}
++      {submit.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(submit.error)}</p>}
++      {data.role == null && <p className="text-sm text-slate-500">You are viewing this department's form; only its COD and allocation staff can change it.</p>}
++
++      <div className="flex gap-2">
++        {(['units', 'lecturers'] as const).map((t) => (
++          <button key={t} onClick={() => setParam('tab', t === 'units' ? null : t)}
++            className={clsx('rounded-full px-3 py-1 text-sm', tab === t ? 'bg-emerald-700 text-white' : 'border border-slate-200 bg-white')}>
++            {t === 'units' ? `Units (${data.rows.length})` : `Lecturers (${data.lecturers.length})`}
++          </button>
++        ))}
++      </div>
++
++      {tab === 'units' ? <UnitsTab code={code} term={term} board={data} /> : <LecturersTab code={code} board={data} />}
++      <p className="text-xs text-slate-500">
++        Units and groups come from the Timetable Generator. <Link to="/" className="text-emerald-700">All departments</Link>
++      </p>
++    </div>
++  )
++}
++
++function UnitsTab({ code, term, board }: { code: string; term: string | undefined; board: FormBoard }) {
++  const [editing, setEditing] = useState<FormRow | 'new' | null>(null)
++  const [pasting, setPasting] = useState(false)
++  const remove = useDeleteEntry(code, term)
++  const bulk = useBulkEntries(code, term)
++  const editable = board.can_edit
++
++  return (
++    <section className="space-y-3">
++      {editable && (
++        <div className="flex flex-wrap justify-end gap-2 text-sm">
++          <button onClick={() => setPasting(true)} className="rounded-md border border-slate-300 bg-white px-3 py-2">Paste from Excel / Word</button>
++          <button onClick={() => setEditing('new')} className="rounded-md border border-slate-300 bg-white px-3 py-2">+ A unit not in the timetable</button>
++        </div>
++      )}
++      {remove.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(remove.error)}</p>}
++      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
++        <table className="w-full text-left text-sm">
++          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
++            <tr>
++              <th className="px-3 py-2">Course code</th><th className="px-3 py-2">Course title</th>
++              <th className="px-3 py-2">Class</th><th className="px-3 py-2">When</th>
++              <th className="px-3 py-2">L</th><th className="px-3 py-2">P</th><th className="px-3 py-2">CF</th>
++              <th className="px-3 py-2">Lecturer</th><th />
++            </tr>
++          </thead>
++          <tbody>
++            {board.rows.map((r) => (
++              <tr key={r.key} className={clsx('border-t border-slate-100 align-top', r.problems.length > 0 && 'bg-red-50')}>
++                <td className="px-3 py-2 font-medium whitespace-nowrap">{r.unit_code} {r.group}</td>
++                <td className="px-3 py-2">
++                  {r.unit_title}
++                  {!r.in_timetable && <span className="ml-1 rounded bg-amber-100 px-1 text-xs text-amber-900">not in timetable</span>}
++                </td>
++                <td className="px-3 py-2 text-xs text-slate-600">
++                  {r.class_rows.map((c) => c.label).join(', ')}
++                  {r.servicing && <span className="ml-1 rounded bg-sky-100 px-1 text-sky-900">servicing</span>}
++                </td>
++                <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
++                  {r.meetings.map((m) => <div key={`${m.day_of_week}${m.start_time}`}>{m.day_of_week} {m.start_time}–{m.end_time} {m.room}</div>)}
++                </td>
++                <td className="px-3 py-2">{hours(r.entry?.lecture_hours)}</td>
++                <td className="px-3 py-2">{hours(r.entry?.practical_hours)}</td>
++                <td className="px-3 py-2">{hours(r.entry?.cf_hours)}</td>
++                <td className="px-3 py-2">
++                  {r.entry?.lecturer ?? <span className="text-slate-400">To be allocated</span>}
++                  {r.problems.map((p) => <p key={p.message} className="text-xs text-red-700">{p.message}</p>)}
++                </td>
++                <td className="space-x-3 px-3 py-2 text-right whitespace-nowrap">
++                  {editable && <button onClick={() => setEditing(r)} className="text-emerald-700">{r.entry ? 'Edit' : 'Allocate'}</button>}
++                  {editable && r.entry && (
++                    <button onClick={() => { if (window.confirm(`Clear ${r.unit_code} ${r.group}?`)) remove.mutate(r.entry!.id) }}
++                      className="text-red-700">Clear</button>
++                  )}
++                </td>
++              </tr>
++            ))}
++            {board.rows.length === 0 && (
++              <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-500">
++                The Timetable Generator has no units for this department in this term yet.
++              </td></tr>
++            )}
++          </tbody>
++        </table>
++      </div>
++      {editing && <EntryForm code={code} term={term} board={board} row={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
++      {pasting && (
++        <BulkPaste title="Paste the allocation form" columns={ENTRY_COLUMNS} templateName="allocation.csv"
++          submit={(rows) => bulk.mutateAsync(rows)} onClose={() => setPasting(false)} />
++      )}
++    </section>
++  )
++}
++
++function EntryForm({ code, term, board, row, onClose }: {
++  code: string; term: string | undefined; board: FormBoard; row: FormRow | null; onClose: () => void
++}) {
++  const save = useSaveEntry(code, term)
++  const saveLecturer = useSaveLecturer(code)
++  const [unit, setUnit] = useState(row?.unit_code ?? '')
++  const [group, setGroup] = useState(row?.group ?? '')
++  const [title, setTitle] = useState(row?.unit_title ?? '')
++  const [lecturer, setLecturer] = useState(row?.entry?.lecturer_id ?? '')
++  const [l, setL] = useState(hours(row?.entry?.lecture_hours))
++  const [p, setP] = useState(hours(row?.entry?.practical_hours))
++  const [cf, setCf] = useState(hours(row?.entry?.cf_hours))
++  const [newName, setNewName] = useState('')
++  const [newKind, setNewKind] = useState<'full_time' | 'part_time'>('full_time')
++  const active = board.lecturers.filter((x) => x.active || x.id === lecturer)
++
++  // A unit typed in that the timetable has: offer its groups.
++  const matching = board.rows.filter((r) => r.in_timetable && r.unit_code.replace(/\s/g, '').toUpperCase() === unit.replace(/\s/g, '').toUpperCase())
++  const groups = matching.map((r) => r.group)
++
++  const addLecturer = () => {
++    const name = newName.trim()
++    if (!name) return
++    saveLecturer.mutate({ body: { full_name: name, employment_type: newKind } }, {
++      onSuccess: (created) => { setLecturer(created.id); setNewName('') },
++    })
++  }
++
++  const submit = (e: FormEvent) => {
++    e.preventDefault()
++    save.mutate({
++      unit_code: unit,
++      group_label: group,
++      unit_title: title,
++      lecturer_id: lecturer || null,
++      lecture_hours: toNumber(l),
++      practical_hours: toNumber(p),
++      cf_hours: toNumber(cf),
++    }, { onSuccess: onClose })
++  }
++
++  return (
++    <Dialog title={row ? `${row.unit_code} ${row.group}`.trim() : 'A unit not in the timetable'} onClose={onClose}>
++      <form onSubmit={submit} className="mt-3 space-y-3">
++        {row ? (
++          <p className="text-sm text-slate-600">
++            {row.unit_title} · {row.class_rows.map((c) => c.label).join(', ')}
++            {row.meetings.length > 0 && ` · ${row.meetings.map((m) => `${m.day_of_week} ${m.start_time}–${m.end_time}`).join(', ')}`}
++          </p>
++        ) : (
++          <>
++            <div className="grid grid-cols-2 gap-3">
++              <Field label="Course code">
++                <input required list="form-units" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="COSC 499" className={inputClass} />
++                <datalist id="form-units">
++                  {[...new Set(board.rows.map((r) => r.unit_code))].map((u) => <option key={u} value={u} />)}
++                </datalist>
++              </Field>
++              <Field label="Group">
++                {groups.length > 0 && groups.some(Boolean) ? (
++                  <select value={group} onChange={(e) => setGroup(e.target.value)} className={inputClass}>
++                    <option value="">Choose…</option>
++                    {groups.map((g) => <option key={g} value={g}>{g || 'Whole class'}</option>)}
++                  </select>
++                ) : (
++                  <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="GR A (if split)" className={inputClass} />
++                )}
++              </Field>
++            </div>
++            {matching.length === 0 && (
++              <Field label="Course title" hint="This unit isn't in the timetable yet, so the Director's office will see it flagged.">
++                <input required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
++              </Field>
++            )}
++          </>
++        )}
++        <Field label="Lecturer">
++          <select value={lecturer} onChange={(e) => setLecturer(e.target.value)} className={inputClass}>
++            <option value="">To be allocated</option>
++            {active.map((x: BoardLecturer) => (
++              <option key={x.id} value={x.id}>{x.display} · {x.weekly_hours}h/week{x.max_weekly_hours ? ` of ${x.max_weekly_hours}` : ''}</option>
++            ))}
++          </select>
++        </Field>
++        <div className="flex items-end gap-2 text-sm">
++          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New lecturer: Dr. Jane Otieno" aria-label="New lecturer name"
++            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5" />
++          <select value={newKind} onChange={(e) => setNewKind(e.target.value as 'full_time' | 'part_time')} aria-label="Full or part time"
++            className="rounded-md border border-slate-300 px-2 py-1.5">
++            <option value="full_time">FT</option><option value="part_time">PT</option>
++          </select>
++          <button type="button" onClick={addLecturer} disabled={saveLecturer.isPending} className="rounded-md border border-slate-300 px-3 py-1.5">Add</button>
++        </div>
++        {saveLecturer.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(saveLecturer.error)}</p>}
++        <div className="grid grid-cols-3 gap-3">
++          <Field label="L"><input type="number" min={0} step={0.5} value={l} onChange={(e) => setL(e.target.value)} className={inputClass} /></Field>
++          <Field label="P"><input type="number" min={0} step={0.5} value={p} onChange={(e) => setP(e.target.value)} className={inputClass} /></Field>
++          <Field label="CF"><input type="number" min={0} step={0.5} value={cf} onChange={(e) => setCf(e.target.value)} className={inputClass} /></Field>
++        </div>
++        {save.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(save.error)}</p>}
++        <div className="flex justify-end gap-2">
++          <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-2 text-sm">Cancel</button>
++          <button type="submit" disabled={save.isPending} className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50">
++            {save.isPending ? 'Checking…' : 'Save'}
++          </button>
++        </div>
++      </form>
++    </Dialog>
++  )
++}
++
++function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
++  const [editing, setEditing] = useState<BoardLecturer | 'new' | null>(null)
++  const [pasting, setPasting] = useState(false)
++  const remove = useDeleteLecturer(code)
++  const bulk = useBulkLecturers(code)
++  const editable = board.role != null
++
++  return (
++    <section className="space-y-3">
++      {editable && (
++        <div className="flex justify-end gap-2 text-sm">
++          <button onClick={() => setPasting(true)} className="rounded-md border border-slate-300 bg-white px-3 py-2">Paste from Excel</button>
++          <button onClick={() => setEditing('new')} className="rounded-md bg-emerald-700 px-3 py-2 text-white">+ Add a lecturer</button>
++        </div>
++      )}
++      {remove.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(remove.error)}</p>}
++      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
++        <table className="w-full text-left text-sm">
++          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
++            <tr>
++              <th className="px-3 py-2">Name</th><th className="px-3 py-2">Staff no.</th><th className="px-3 py-2">FT/PT</th>
++              <th className="px-3 py-2">Phone</th><th className="px-3 py-2">Classes</th><th className="px-3 py-2">Hours / week</th><th />
++            </tr>
++          </thead>
++          <tbody>
++            {board.lecturers.map((x) => (
++              <tr key={x.id} className={clsx('border-t border-slate-100', !x.active && 'text-slate-400')}>
++                <td className="px-3 py-2 font-medium">{x.title} {x.full_name}{!x.active && ' (inactive)'}</td>
++                <td className="px-3 py-2">{x.staff_number}</td>
++                <td className="px-3 py-2">{employmentShort(x.employment_type)}</td>
++                <td className="px-3 py-2">{x.phone}</td>
++                <td className="px-3 py-2">{x.classes}</td>
++                <td className="px-3 py-2">{x.weekly_hours}{x.max_weekly_hours ? ` / ${x.max_weekly_hours}` : ''}</td>
++                <td className="space-x-3 px-3 py-2 text-right">
++                  {editable && <button onClick={() => setEditing(x)} className="text-emerald-700">Edit</button>}
++                  {editable && (
++                    <button onClick={() => { if (window.confirm(`Remove ${x.full_name}?`)) remove.mutate(x.id) }} className="text-red-700">Remove</button>
++                  )}
++                </td>
++              </tr>
++            ))}
++            {board.lecturers.length === 0 && (
++              <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500">No lecturers on the list yet.</td></tr>
++            )}
++          </tbody>
++        </table>
++      </div>
++      {editing && <LecturerForm code={code} lecturer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
++      {pasting && (
++        <BulkPaste title="Paste lecturers" columns={LECTURER_COLUMNS} templateName="lecturers.csv"
++          submit={(rows) => bulk.mutateAsync(rows)} onClose={() => setPasting(false)} />
++      )}
++    </section>
++  )
++}
++
++function LecturerForm({ code, lecturer, onClose }: { code: string; lecturer: BoardLecturer | null; onClose: () => void }) {
++  const save = useSaveLecturer(code)
++  const [form, setForm] = useState<LecturerInput>({
++    title: lecturer?.title ?? 'Dr.',
++    full_name: lecturer?.full_name ?? '',
++    staff_number: lecturer?.staff_number ?? '',
++    employment_type: lecturer?.employment_type ?? 'full_time',
++    phone: lecturer?.phone ?? '',
++    email: lecturer?.email ?? '',
++    max_weekly_hours: lecturer?.max_weekly_hours ?? null,
++    active: lecturer?.active ?? true,
++  })
++  const submit = (e: FormEvent) => {
++    e.preventDefault()
++    const body = {
++      ...form,
++      staff_number: form.staff_number?.trim() || null,
++      // Editing: an empty limit is sent as 0, which clears it.
++      max_weekly_hours: form.max_weekly_hours ?? (lecturer ? 0 : null),
++    }
++    save.mutate({ id: lecturer?.id, body }, { onSuccess: onClose })
++  }
++  return (
++    <Dialog title={lecturer ? `Edit ${lecturer.full_name}` : 'Add a lecturer'} onClose={onClose}>
++      <form onSubmit={submit} className="mt-3 space-y-3">
++        <div className="grid grid-cols-4 gap-3">
++          <Field label="Title"><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputClass} /></Field>
++          <div className="col-span-3">
++            <Field label="Full name"><input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className={inputClass} /></Field>
++          </div>
++        </div>
++        <div className="grid grid-cols-2 gap-3">
++          <Field label="Staff number" hint="Matches the same person on other departments' lists and in SMARTTT.">
++            <input value={form.staff_number ?? ''} onChange={(e) => setForm({ ...form, staff_number: e.target.value })} className={inputClass} />
++          </Field>
++          <Field label="Full or part time">
++            <select value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value as LecturerInput['employment_type'] })} className={inputClass}>
++              <option value="full_time">Full time (FT)</option><option value="part_time">Part time (PT)</option>
++            </select>
++          </Field>
++          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputClass} /></Field>
++          <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputClass} /></Field>
++          <Field label="Max teaching hours a week" hint="Leave blank for no limit.">
++            <input type="number" min={1} max={60} value={form.max_weekly_hours ?? ''}
++              onChange={(e) => setForm({ ...form, max_weekly_hours: e.target.value === '' ? null : Number(e.target.value) })} className={inputClass} />
++          </Field>
++          <label className="mt-6 flex items-center gap-2 text-sm">
++            <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Active
++          </label>
++        </div>
++        {save.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(save.error)}</p>}
++        <div className="flex justify-end gap-2">
++          <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-2 text-sm">Cancel</button>
++          <button type="submit" disabled={save.isPending} className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50">Save</button>
++        </div>
++      </form>
++    </Dialog>
++  )
++}
+diff --git a/frontend/src/pages/FormProgressPage.tsx b/frontend/src/pages/FormProgressPage.tsx
+new file mode 100644
+index 0000000..5e4ead6
+--- /dev/null
++++ b/frontend/src/pages/FormProgressPage.tsx
+@@ -0,0 +1,49 @@
++import { Link, Navigate, useSearchParams } from 'react-router-dom'
++import { errorMessage } from '@/lib/api'
++import { useFormProgress } from '@/lib/form'
++import { useMe } from '@/lib/queries'
++
++/** Every department's allocation form for the term: the Directorate sees all, others their own. */
++export function FormProgressPage() {
++  const me = useMe()
++  const [search] = useSearchParams()
++  const term = search.get('term') || undefined
++  const progress = useFormProgress(term)
++  const suffix = term ? `?term=${encodeURIComponent(term)}` : ''
++
++  if (progress.isPending) return <p className="text-sm text-slate-500">Loading…</p>
++  if (progress.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(progress.error)}</p>
++  const rows = progress.data.departments
++  // A member of one department goes straight to its form.
++  if (!me.data?.timetabling_office && rows.length === 1) return <Navigate to={`/form/${encodeURIComponent(rows[0].code)}${suffix}`} replace />
++
++  return (
++    <div className="space-y-4">
++      <div>
++        <h1 className="text-xl font-semibold">Course allocation</h1>
++        <p className="text-sm text-slate-600">{progress.data.term.name}</p>
++      </div>
++      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
++        <table className="w-full text-left text-sm">
++          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
++            <tr><th className="px-3 py-2">Department</th><th className="px-3 py-2">Allocated</th><th className="px-3 py-2">Submitted</th></tr>
++          </thead>
++          <tbody>
++            {rows.map((d) => (
++              <tr key={d.code} className="border-t border-slate-100">
++                <td className="px-3 py-2">
++                  <Link to={`/form/${encodeURIComponent(d.code)}${suffix}`} className="font-medium text-emerald-700">{d.name}</Link>
++                </td>
++                <td className="px-3 py-2">{d.allocated} of {d.classes}</td>
++                <td className="px-3 py-2 text-slate-600">
++                  {d.submitted_at ? `${new Date(d.submitted_at).toLocaleDateString()} by ${d.submitted_by}` : 'Not yet'}
++                </td>
++              </tr>
++            ))}
++            {rows.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-slate-500">No departments.</td></tr>}
++          </tbody>
++        </table>
++      </div>
++    </div>
++  )
++}
+-- 
+2.43.0
+
