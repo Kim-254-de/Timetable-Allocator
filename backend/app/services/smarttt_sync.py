@@ -1,13 +1,14 @@
 """
-Sending the allocation form's lecturers to SMARTTT, which shows every lecturer
-and student their timetable in the app and passes each class on to Smart
-Attendance.
+Publishing the allocation form to SMARTTT, which shows every lecturer and
+student their timetable in the app and passes each class on to Smart
+Attendance. The COD's submit publishes; SMARTTT's own upload and allocation
+pages are the fallback for when the Generator or the Allocator can't be used.
 
-A class can be sent once SMARTTT has the Director's latest version (every class
-in it then has a SMARTTT key) and its lecturer has a staff number SMARTTT knows.
-SMARTTT re-checks clashes across all departments under a lock and has the last
-word: a change it refuses on save is not kept here either. When SMARTTT can't
-be reached, the change is kept here and waits to be sent.
+A class can be published once SMARTTT has the Director's approved timetable
+(every class in it then has a SMARTTT key) and its lecturer has a staff number
+SMARTTT knows. SMARTTT re-checks clashes across all departments under a lock
+and has the last word; a class it refuses, or can't be reached for, shows why
+and is retried with “Publish again”.
 """
 
 from __future__ import annotations
@@ -27,10 +28,12 @@ from app.models import FormEntry, Lecturer, utcnow
 
 logger = logging.getLogger(__name__)
 
-SENT = "sent"  # SMARTTT has this class's lecturer as on the form
-PENDING = "pending"  # can be sent and hasn't been (or SMARTTT was down)
-WAITING = "waiting"  # can't be sent until something changes elsewhere (e.g. the Director's version)
-FAILED = "failed"  # SMARTTT refused it, or the lecturer can't be matched
+SENT = "sent"  # published: SMARTTT has this class's lecturer as on the form
+PENDING = "pending"  # changed since the last publish (or never published)
+WAITING = "waiting"  # can't be published until something changes elsewhere (e.g. the Director's version)
+FAILED = "failed"  # SMARTTT refused it or couldn't be reached
+NO_STAFF_NUMBER = "no_staff_number"  # the lecturer can't be matched in SMARTTT
+UNPUBLISHED = (PENDING, FAILED, NO_STAFF_NUMBER)
 
 
 @dataclass(frozen=True)
@@ -81,12 +84,12 @@ def status(entry: FormEntry | None, where: Target) -> dict[str, Any]:
         return {"state": SENT, "message": None}
     if entry.lecturer is not None and _staff_number(entry.lecturer) is None:
         return {
-            "state": FAILED,
-            "message": f"Add {entry.lecturer.full_name}'s staff number to send them to SMARTTT.",
+            "state": NO_STAFF_NUMBER,
+            "message": f"Add {entry.lecturer.full_name}'s staff number so it can be published to SMARTTT.",
         }
     if entry.smarttt_error:
         return {"state": FAILED, "message": entry.smarttt_error}
-    return {"state": PENDING, "message": "Not sent to SMARTTT yet."}
+    return {"state": PENDING, "message": "Not published yet; it goes to SMARTTT when the COD submits."}
 
 
 def _smarttt_lecturer_id(smarttt: SmartttClient, lecturer: Lecturer) -> str:
@@ -108,15 +111,15 @@ def _smarttt_lecturer_id(smarttt: SmartttClient, lecturer: Lecturer) -> str:
     )
 
 
-def push(smarttt: SmartttClient, entry: FormEntry, where: Target, *, strict: bool) -> None:
+def push(smarttt: SmartttClient, entry: FormEntry, where: Target) -> None:
     """
-    Sends the entry's lecturer (or its removal) to SMARTTT unless SMARTTT
-    already has it. `strict` (saving one class): a refusal raises, so the change
-    isn't kept; otherwise (sending later, pasting) the reason is kept on the
-    entry. SMARTTT being down never raises: the entry waits to be sent.
+    Publishes the entry's lecturer (or its removal) to SMARTTT unless SMARTTT
+    already has it. Why SMARTTT didn't take it is kept on the entry.
     """
     if where.key is None or where.term_id is None or in_sync(entry, where):
         return
+    if entry.lecturer is None and entry.smarttt_synced_at is None:
+        return  # never allocated here: leave whatever SMARTTT has (e.g. from its own allocation)
     try:
         wanted = _smarttt_lecturer_id(smarttt, entry.lecturer) if entry.lecturer is not None else None
         # Once this form has set the class in SMARTTT, a change made there since
@@ -130,8 +133,6 @@ def push(smarttt: SmartttClient, entry: FormEntry, where: Target, *, strict: boo
             check_expected=known,
         )
     except ApiError as unmatched:
-        if strict:
-            raise
         entry.smarttt_error = unmatched.message
         return
     except SmartttNotFound:
@@ -140,32 +141,14 @@ def push(smarttt: SmartttClient, entry: FormEntry, where: Target, *, strict: boo
         )
         return
     except SmartttRefused as refused:
-        if strict:
-            raise ApiError(409, "SMARTTT_REFUSED", refused.message, {"code": refused.code}) from refused
         entry.smarttt_error = refused.message
         return
     except SmartttError as down:
-        logger.warning("Could not send %s to SMARTTT: %s", entry.key, down)
-        entry.smarttt_error = f"{down.message} Use “Send to SMARTTT” to try again."
+        logger.warning("Could not publish %s to SMARTTT: %s", entry.key, down)
+        entry.smarttt_error = f"{down.message} Use “Publish again” to retry."
         return
     entry.smarttt_key = where.key
     entry.smarttt_lecturer_id = wanted
     entry.smarttt_sent_for = _local(entry)
     entry.smarttt_synced_at = utcnow()
     entry.smarttt_error = None
-
-
-def clear(smarttt: SmartttClient, entry: FormEntry, smarttt_term_id: str | None) -> None:
-    """Before a row is removed: takes the lecturer this form set back off the class in SMARTTT."""
-    if not (entry.smarttt_key and entry.smarttt_synced_at and entry.smarttt_lecturer_id and smarttt_term_id):
-        return
-    try:
-        smarttt.set_lecturer(
-            entry.smarttt_key, smarttt_term_id, None, entry.smarttt_lecturer_id, check_expected=True
-        )
-    except (SmartttNotFound, SmartttRefused):
-        return  # gone from SMARTTT, or changed there since: nothing of this form's left to clear
-    except SmartttError as down:
-        raise ApiError(
-            503, "SMARTTT_UNAVAILABLE", f"{down.message} The lecturer has to come off the class there first."
-        ) from down

@@ -225,24 +225,16 @@ def form_save(
     identity: Me,
     db: Db,
     generator: Generator,
-    smarttt: Smarttt,
     term: TermParam = None,
 ) -> dict[str, Any]:
-    fields = body.model_dump(exclude_unset=True)
-    return ok(form.save_entry(db, generator, identity, department, term, fields, smarttt=smarttt))
+    return ok(form.save_entry(db, generator, identity, department, term, body.model_dump(exclude_unset=True)))
 
 
 @router.post("/form/{department}/entries/bulk")
 def form_bulk(
-    department: DeptCode,
-    body: BulkBody,
-    identity: Me,
-    db: Db,
-    generator: Generator,
-    smarttt: Smarttt,
-    term: TermParam = None,
+    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator, term: TermParam = None
 ) -> dict[str, Any]:
-    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows, smarttt=smarttt))
+    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows))
 
 
 @router.delete("/form/{department}/entries/{entry_id}")
@@ -252,10 +244,9 @@ def form_delete(
     identity: Me,
     db: Db,
     generator: Generator,
-    smarttt: Smarttt,
     term: TermParam = None,
 ) -> dict[str, Any]:
-    form.delete_entry(db, generator, identity, department, term, entry_id, smarttt=smarttt)
+    form.delete_entry(db, generator, identity, department, term, entry_id)
     return ok(None)
 
 
@@ -266,11 +257,11 @@ def form_submit(
     return ok(form.submit(db, generator, identity, department, term, smarttt=smarttt))
 
 
-@router.post("/form/{department}/send-to-smarttt")
-def form_send_to_smarttt(
+@router.post("/form/{department}/publish-again")
+def form_publish_again(
     department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
 ) -> dict[str, Any]:
-    return ok(form.send_to_smarttt(db, generator, smarttt, identity, department, term))
+    return ok(form.publish_again(db, generator, smarttt, identity, department, term))
 
 
 @router.post("/form/{department}/reopen")

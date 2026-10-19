@@ -17,7 +17,7 @@ import {
   useGeneratorTerms,
   useSaveEntry,
   useSaveLecturer,
-  useSendToSmarttt,
+  usePublishAgain,
   useSubmitForm,
   type BoardLecturer,
   type FormBoard,
@@ -64,7 +64,7 @@ export function AllocationFormPage() {
   const terms = useGeneratorTerms()
   const board = useFormBoard(code, term)
   const submit = useSubmitForm(code, term)
-  const send = useSendToSmarttt(code, term)
+  const publishAgain = usePublishAgain(code, term)
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(search)
@@ -99,10 +99,10 @@ export function AllocationFormPage() {
               <Download size={16} /> {label}
             </a>
           ))}
-          {data.role != null && data.summary.not_in_smarttt > 0 && (
-            <button onClick={() => send.mutate()} disabled={send.isPending}
+          {data.can_submit && data.submission && data.summary.not_in_smarttt > 0 && (
+            <button onClick={() => publishAgain.mutate()} disabled={publishAgain.isPending}
               className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 disabled:opacity-50">
-              {send.isPending ? 'Sending…' : `Send to SMARTTT (${data.summary.not_in_smarttt})`}
+              {publishAgain.isPending ? 'Publishing…' : `Publish again (${data.summary.not_in_smarttt})`}
             </button>
           )}
           {data.can_submit && (
@@ -111,7 +111,9 @@ export function AllocationFormPage() {
                 className="rounded-md border border-slate-300 bg-white px-3 py-2">Reopen</button>
             ) : (
               <button onClick={() => submit.mutate('submit')} disabled={submit.isPending}
-                className="rounded-md bg-emerald-700 px-4 py-2 font-medium text-white disabled:opacity-50">Submit</button>
+                className="rounded-md bg-emerald-700 px-4 py-2 font-medium text-white disabled:opacity-50">
+                {submit.isPending ? 'Publishing…' : 'Submit & publish'}
+              </button>
             )
           )}
         </div>
@@ -119,12 +121,12 @@ export function AllocationFormPage() {
 
       {data.submission && (
         <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-          Submitted by {data.submission.submitted_by} on {new Date(data.submission.submitted_at).toLocaleString()}.
+          Submitted and published to SMARTTT by {data.submission.submitted_by} on {new Date(data.submission.submitted_at).toLocaleString()}.
           {data.can_submit ? ' Reopen it to make changes.' : ' The COD can reopen it.'}
         </p>
       )}
       {submit.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(submit.error)}</p>}
-      {send.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(send.error)}</p>}
+      {publishAgain.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(publishAgain.error)}</p>}
       {data.role == null && <p className="text-sm text-slate-500">You are viewing this department's form; only its COD and allocation staff can change it.</p>}
 
       <div className="flex gap-2">
@@ -228,7 +230,8 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
 /** Whether SMARTTT (lecturers' timetables, Smart Attendance) has this class's lecturer. */
 function SmartttBadge({ smarttt }: { smarttt: SmartttState }) {
   if (smarttt.state == null) return null
-  if (smarttt.state === 'sent') return <span className="block text-xs text-emerald-700">In SMARTTT</span>
+  if (smarttt.state === 'sent') return <span className="block text-xs text-emerald-700">Published to SMARTTT</span>
+  if (smarttt.state === 'pending') return <span className="block text-xs text-slate-500">Not published yet</span>
   return (
     <span className={clsx('block text-xs', smarttt.state === 'waiting' ? 'text-slate-500' : 'text-amber-800')}>
       {smarttt.state === 'waiting' ? 'Not in SMARTTT yet' : 'Not in SMARTTT'}{smarttt.message ? `: ${smarttt.message}` : ''}

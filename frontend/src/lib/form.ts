@@ -35,7 +35,7 @@ export interface FormEntry {
 
 /** Where a class's lecturer is in SMARTTT (lecturers' timetables, Smart Attendance). */
 export interface SmartttState {
-  state: 'sent' | 'pending' | 'waiting' | 'failed' | null
+  state: 'sent' | 'pending' | 'waiting' | 'failed' | 'no_staff_number' | null
   message: string | null
 }
 
@@ -167,10 +167,10 @@ export const useSubmitForm = (code: string, term: string | undefined) =>
   useFormMutation(code, (action: 'submit' | 'reopen') =>
     api.post<FormBoard>(`/form/${dept(code)}/${action}`, null, { params: params(term) }).then((r) => r.data))
 
-/** Sends the department's allocations SMARTTT doesn't have yet (it was down, or said no). */
-export const useSendToSmarttt = (code: string, term: string | undefined) =>
+/** The COD retries publishing the submitted form's classes SMARTTT didn't take (it was down, or said no). */
+export const usePublishAgain = (code: string, term: string | undefined) =>
   useFormMutation(code, () =>
-    api.post<FormBoard>(`/form/${dept(code)}/send-to-smarttt`, null, { params: params(term) }).then((r) => r.data))
+    api.post<FormBoard>(`/form/${dept(code)}/publish-again`, null, { params: params(term) }).then((r) => r.data))
 
 export const useSaveLecturer = (code: string) =>
   useFormMutation(code, ({ id, body }: { id?: string; body: Partial<LecturerInput> }) =>

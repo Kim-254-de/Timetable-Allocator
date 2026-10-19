@@ -13,6 +13,7 @@ os.environ.setdefault("GENERATOR_API_KEY", "test-generator-key")
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app import models  # noqa: F401  (registers every table before create_all)
 from app.clients.generator import GeneratorClient, set_generator
 from app.clients.smarttt import SmartttClient, set_smarttt
 from app.config import get_settings
