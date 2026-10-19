@@ -52,6 +52,7 @@ class FakeGenerator:
             {"id": TERM, "name": "September - December 2026", "academic_year": "2026/2027", "semester": 1}
         ]
         self.published_version: int | None = 1
+        self.in_smarttt = False  # SMARTTT has the published version
         self.sections = [
             _section(
                 "COSC 103",
@@ -87,6 +88,16 @@ class FakeGenerator:
             ),
         ]
 
+    def link_to_smarttt(self, smarttt_term_id: str, keys: dict[str, str], *, sent: bool = True) -> None:
+        """The term came from SMARTTT and (with `sent`) its published version reached it.
+
+        `keys` maps each class's key here to its key in SMARTTT.
+        """
+        self.terms[0]["smarttt_term_id"] = smarttt_term_id
+        self.in_smarttt = sent
+        for s in self.sections:
+            s["smarttt_key"] = keys.get(s["key"])
+
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
 
@@ -100,6 +111,7 @@ class FakeGenerator:
             data = {
                 "term": self.terms[0],
                 "published_version": self.published_version,
+                "in_smarttt": self.in_smarttt,
                 "sections": self.sections,
             }
             return httpx.Response(200, json={"success": True, "data": data})

@@ -33,11 +33,18 @@ department picks a lecturer and fills in L, P and CF, as on the Word form:
   per class row with a TOTAL row, "Servicing for other departments", and
   "Prepared by". Phone numbers appear only on this, the department's own download.
 - **All departments**: the Directorate sees every department's progress.
+- **SMARTTT**: once SMARTTT has the Director's approved version, each saved
+  lecturer is sent to SMARTTT (matched by staff number, which is required),
+  so it reaches the lecturer's timetable in the app and Smart Attendance.
+  SMARTTT re-checks clashes across every department; a change it refuses is
+  not saved. If SMARTTT is down the change is kept and marked "Not in
+  SMARTTT"; **Send to SMARTTT** (or submitting) sends what is waiting.
+  Clearing a row takes the lecturer off the class in SMARTTT too.
 
 API: `GET /api/generator/terms`, `GET /api/form/progress`,
 `GET /api/form/{dept}`, `PUT /api/form/{dept}/entries`,
 `POST /api/form/{dept}/entries/bulk`, `DELETE /api/form/{dept}/entries/{id}`,
-`POST /api/form/{dept}/submit|reopen`, `GET /api/form/{dept}/export.pdf|docx|xlsx`,
+`POST /api/form/{dept}/submit|reopen|send-to-smarttt`, `GET /api/form/{dept}/export.pdf|docx|xlsx`,
 `/api/form/{dept}/lecturers[/bulk|/{id}]`. `{dept}` is the department's code
 in the Generator (e.g. `DCOMP`); a signed-in person belongs to it when SMARTTT
 lists them under a department with the same SMARTTT id, code or name.

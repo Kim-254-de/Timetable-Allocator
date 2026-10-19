@@ -80,10 +80,14 @@ class FormEntryBody(_Strict):
         return value
 
 
+StaffNumber = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
 class LecturerBody(_Strict):
     title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] = ""
     full_name: Name
-    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
+    # How SMARTTT knows the lecturer, so their classes reach their timetable and attendance.
+    staff_number: StaffNumber
     employment_type: Literal["full_time", "part_time"] = "full_time"
     phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] = ""
     email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] = ""
@@ -94,7 +98,7 @@ class LecturerBody(_Strict):
 class LecturerPatch(_Strict):
     title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] | None = None
     full_name: Name | None = None
-    staff_number: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None = None
+    staff_number: StaffNumber | None = None
     employment_type: Literal["full_time", "part_time"] | None = None
     phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None
     email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None

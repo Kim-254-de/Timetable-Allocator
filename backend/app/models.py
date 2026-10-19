@@ -249,6 +249,15 @@ class FormEntry(Base):
     entered_by_account_id: Mapped[str] = mapped_column(String(64))
     entered_by_name: Mapped[str] = mapped_column(String(255))
     entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # What SMARTTT was last told for this class: its section key there, the
+    # SMARTTT lecturer set on it (None: cleared) and which of this form's
+    # lecturers that was ("" for none), so a change is sent once and SMARTTT
+    # can refuse a stale one. `smarttt_error` says why the last try failed.
+    smarttt_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    smarttt_lecturer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    smarttt_sent_for: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    smarttt_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    smarttt_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     lecturer: Mapped[Lecturer | None] = relationship(lazy="joined")
 

@@ -17,12 +17,14 @@ import {
   useGeneratorTerms,
   useSaveEntry,
   useSaveLecturer,
+  useSendToSmarttt,
   useSubmitForm,
   type BoardLecturer,
   type FormBoard,
   type FormLecturer,
   type FormRow,
   type LecturerInput,
+  type SmartttState,
 } from '@/lib/form'
 
 const ENTRY_COLUMNS: BulkColumn[] = [
@@ -62,6 +64,7 @@ export function AllocationFormPage() {
   const terms = useGeneratorTerms()
   const board = useFormBoard(code, term)
   const submit = useSubmitForm(code, term)
+  const send = useSendToSmarttt(code, term)
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(search)
@@ -96,6 +99,12 @@ export function AllocationFormPage() {
               <Download size={16} /> {label}
             </a>
           ))}
+          {data.role != null && data.summary.not_in_smarttt > 0 && (
+            <button onClick={() => send.mutate()} disabled={send.isPending}
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 disabled:opacity-50">
+              {send.isPending ? 'Sending…' : `Send to SMARTTT (${data.summary.not_in_smarttt})`}
+            </button>
+          )}
           {data.can_submit && (
             data.submission ? (
               <button onClick={() => submit.mutate('reopen')} disabled={submit.isPending}
@@ -115,6 +124,7 @@ export function AllocationFormPage() {
         </p>
       )}
       {submit.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(submit.error)}</p>}
+      {send.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(send.error)}</p>}
       {data.role == null && <p className="text-sm text-slate-500">You are viewing this department's form; only its COD and allocation staff can change it.</p>}
 
       <div className="flex gap-2">
@@ -186,6 +196,7 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
                 <td className="px-3 py-2">{hours(r.entry?.cf_hours)}</td>
                 <td className="px-3 py-2">
                   {r.entry?.lecturer ?? <span className="text-slate-400">Not allocated</span>}
+                  <SmartttBadge smarttt={r.smarttt} />
                   {r.problems.map((p) => <p key={p.message} className="text-xs text-red-700">{p.message}</p>)}
                 </td>
                 <td className="space-x-3 px-3 py-2 text-right whitespace-nowrap">
@@ -211,6 +222,17 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
           submit={(rows) => bulk.mutateAsync(rows)} onClose={() => setPasting(false)} />
       )}
     </section>
+  )
+}
+
+/** Whether SMARTTT (lecturers' timetables, Smart Attendance) has this class's lecturer. */
+function SmartttBadge({ smarttt }: { smarttt: SmartttState }) {
+  if (smarttt.state == null) return null
+  if (smarttt.state === 'sent') return <span className="block text-xs text-emerald-700">In SMARTTT</span>
+  return (
+    <span className={clsx('block text-xs', smarttt.state === 'waiting' ? 'text-slate-500' : 'text-amber-800')}>
+      {smarttt.state === 'waiting' ? 'Not in SMARTTT yet' : 'Not in SMARTTT'}{smarttt.message ? `: ${smarttt.message}` : ''}
+    </span>
   )
 }
 
@@ -394,7 +416,7 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
             {board.lecturers.map((x) => (
               <tr key={x.id} className={clsx('border-t border-slate-100', !x.active && 'text-slate-400')}>
                 <td className="px-3 py-2 font-medium">{x.title} {x.full_name}{!x.active && ' (inactive)'}</td>
-                <td className="px-3 py-2">{x.staff_number}</td>
+                <td className="px-3 py-2">{x.staff_number || <span className="text-amber-700">Missing</span>}</td>
                 <td className="px-3 py-2">{employmentShort(x.employment_type)}</td>
                 <td className="px-3 py-2">{x.phone || <span className="text-amber-700">Missing</span>}</td>
                 <td className="px-3 py-2">{x.email}</td>
@@ -458,8 +480,8 @@ function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Staff number" hint="Matches the same person on other departments' lists and in SMARTTT.">
-            <input value={form.staff_number ?? ''} onChange={(e) => setForm({ ...form, staff_number: e.target.value })} className={inputClass} />
+          <Field label="Staff number" hint="How SMARTTT knows them, so their classes reach their timetable and attendance.">
+            <input required value={form.staff_number ?? ''} onChange={(e) => setForm({ ...form, staff_number: e.target.value })} placeholder="TUN/STF/0123" className={inputClass} />
           </Field>
           <Field label="Full or part time">
             <select value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value as LecturerInput['employment_type'] })} className={inputClass}>

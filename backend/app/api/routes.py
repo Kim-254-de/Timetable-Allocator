@@ -225,16 +225,24 @@ def form_save(
     identity: Me,
     db: Db,
     generator: Generator,
+    smarttt: Smarttt,
     term: TermParam = None,
 ) -> dict[str, Any]:
-    return ok(form.save_entry(db, generator, identity, department, term, body.model_dump(exclude_unset=True)))
+    fields = body.model_dump(exclude_unset=True)
+    return ok(form.save_entry(db, generator, identity, department, term, fields, smarttt=smarttt))
 
 
 @router.post("/form/{department}/entries/bulk")
 def form_bulk(
-    department: DeptCode, body: BulkBody, identity: Me, db: Db, generator: Generator, term: TermParam = None
+    department: DeptCode,
+    body: BulkBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
 ) -> dict[str, Any]:
-    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows))
+    return ok(form.bulk_entries(db, generator, identity, department, term, body.rows, smarttt=smarttt))
 
 
 @router.delete("/form/{department}/entries/{entry_id}")
@@ -244,17 +252,25 @@ def form_delete(
     identity: Me,
     db: Db,
     generator: Generator,
+    smarttt: Smarttt,
     term: TermParam = None,
 ) -> dict[str, Any]:
-    form.delete_entry(db, generator, identity, department, term, entry_id)
+    form.delete_entry(db, generator, identity, department, term, entry_id, smarttt=smarttt)
     return ok(None)
 
 
 @router.post("/form/{department}/submit")
 def form_submit(
-    department: DeptCode, identity: Me, db: Db, generator: Generator, term: TermParam = None
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
 ) -> dict[str, Any]:
-    return ok(form.submit(db, generator, identity, department, term))
+    return ok(form.submit(db, generator, identity, department, term, smarttt=smarttt))
+
+
+@router.post("/form/{department}/send-to-smarttt")
+def form_send_to_smarttt(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(form.send_to_smarttt(db, generator, smarttt, identity, department, term))
 
 
 @router.post("/form/{department}/reopen")

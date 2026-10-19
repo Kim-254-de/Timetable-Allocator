@@ -30,8 +30,10 @@ from sqlalchemy.orm import Session
 
 from app.auth import ROLE_COD, Identity
 from app.clients.generator import GeneratorClient
+from app.clients.smarttt import SmartttClient
 from app.errors import ApiError
 from app.models import EmploymentType, FormEntry, FormSubmission, Lecturer, utcnow
+from app.services import smarttt_sync
 from app.services.allocation import audit
 from app.services.timeutil import DAY_ORDER, minutes, overlaps
 
@@ -65,6 +67,10 @@ class Context:
     published_version: int | None
     department: dict[str, Any]
     role: str | None  # cod | admin | editor | None (viewing only)
+    in_smarttt: bool = False  # SMARTTT has the Director's latest version: lecturers can be sent
+
+    def smarttt_target(self, section: dict[str, Any] | None) -> smarttt_sync.Target:
+        return smarttt_sync.target(self.term, self.in_smarttt, section)
 
 
 def pick_term(generator: GeneratorClient, term_id: str | None) -> dict[str, Any]:
@@ -151,6 +157,7 @@ def context(
         published_version=data.get("published_version"),
         department={"code": department["code"], "name": department["name"]},
         role=role,
+        in_smarttt=bool(data.get("in_smarttt")),
     )
 
 
@@ -368,7 +375,9 @@ def _section_row(
     entry: FormEntry | None,
     department_code: str,
     problems: list[dict[str, str]],
+    smarttt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    smarttt = smarttt or {"state": None, "message": None}
     if section is not None:
         class_rows = [
             {
@@ -394,6 +403,7 @@ def _section_row(
             "in_timetable": True,
             "entry": entry_dict(entry),
             "problems": problems,
+            "smarttt": smarttt,
         }
     assert entry is not None
     return {
@@ -411,6 +421,7 @@ def _section_row(
         "in_timetable": False,
         "entry": entry_dict(entry),
         "problems": problems,
+        "smarttt": smarttt,
     }
 
 
@@ -455,10 +466,12 @@ def board(
             if entry is not None and entry.lecturer is not None
             else []
         )
-        rows.append(_section_row(s, entry, code, problems))
+        rows.append(_section_row(s, entry, code, problems, smarttt_sync.status(entry, ctx.smarttt_target(s))))
     for key, entry in mine.items():
         if key not in own_keys:
-            rows.append(_section_row(None, entry, code, []))
+            rows.append(
+                _section_row(None, entry, code, [], smarttt_sync.status(entry, ctx.smarttt_target(None)))
+            )
     rows.sort(key=lambda r: (r["unit_code"], r["group"]))
 
     lecturers = department_lecturers(db, code)
@@ -487,6 +500,10 @@ def board(
             "classes": len(rows),
             "allocated": sum(1 for r in rows if r["entry"] and r["entry"]["lecturer_id"]),
             "not_in_timetable": sum(1 for r in rows if not r["in_timetable"]),
+            # Allocations SMARTTT doesn't have yet that can be sent now (or were refused).
+            "not_in_smarttt": sum(
+                1 for r in rows if r["smarttt"]["state"] in (smarttt_sync.PENDING, smarttt_sync.FAILED)
+            ),
             "problems": sum(1 for r in rows if r["problems"]),
         },
         "lecturers": [
@@ -522,12 +539,15 @@ def save_entry(
     fields: dict[str, Any],
     ctx: Context | None = None,
     commit: bool = True,
+    smarttt: SmartttClient | None = None,
 ) -> dict[str, Any]:
     """
     Adds or changes one row of the form. A unit in the Generator must belong to
     this department; its title and class rows come from the Generator. A
     lecturer is refused for a class that clashes with another of their
-    classes, or takes them over their weekly hours.
+    classes, or takes them over their weekly hours. With `smarttt`, the
+    lecturer is sent to SMARTTT too, which re-checks every department's
+    classes and can refuse; then nothing is saved.
     """
     ctx = ctx or context(generator, identity, department_code, term_id)
     _require_allocate(ctx)
@@ -605,11 +625,14 @@ def save_entry(
     entry.entered_by_account_id = identity.account_id
     entry.entered_by_name = identity.actor
     entry.entered_at = utcnow()
+    where = ctx.smarttt_target(section)
+    if smarttt is not None:
+        smarttt_sync.push(smarttt, entry, where, strict=True)
     db.flush()
     audit(db, identity, "form_entry.save", "form_entry", str(entry.id), before, entry_dict(entry))
     if commit:
         db.commit()
-    return _section_row(section, entry, code, [])
+    return _section_row(section, entry, code, [], smarttt_sync.status(entry, where))
 
 
 def delete_entry(
@@ -619,6 +642,7 @@ def delete_entry(
     department_code: str,
     term_id: str | None,
     entry_id: str,
+    smarttt: SmartttClient | None = None,
 ) -> None:
     ctx = context(generator, identity, department_code, term_id)
     _require_allocate(ctx)
@@ -629,17 +653,26 @@ def delete_entry(
         entry = None
     if entry is None or entry.department_code != _code(ctx) or entry.generator_term_id != ctx.term["id"]:
         raise ApiError(404, "NOT_FOUND", "No such row on this form.")
+    if smarttt is not None:
+        smarttt_sync.clear(smarttt, entry, ctx.term.get("smarttt_term_id"))
     audit(db, identity, "form_entry.delete", "form_entry", entry_id, entry_dict(entry), None)
     db.delete(entry)
     db.commit()
 
 
 def submit(
-    db: Session, generator: GeneratorClient, identity: Identity, department_code: str, term_id: str | None
+    db: Session,
+    generator: GeneratorClient,
+    identity: Identity,
+    department_code: str,
+    term_id: str | None,
+    smarttt: SmartttClient | None = None,
 ) -> dict[str, Any]:
     ctx = context(generator, identity, department_code, term_id)
     _require_cod(ctx)
     _require_open(db, ctx)
+    if smarttt is not None:
+        _send_waiting(db, smarttt, ctx)
     current = board(db, generator, identity, department_code, ctx.term["id"])
     blocking = [r for r in current["rows"] if r["problems"]]
     if blocking:
@@ -827,6 +860,7 @@ def bulk_entries(
     department_code: str,
     term_id: str | None,
     rows: list[dict[str, Any]],
+    smarttt: SmartttClient | None = None,
 ) -> dict[str, Any]:
     """
     Rows pasted from the Word or Excel allocation form: Course code, Group,
@@ -898,6 +932,8 @@ def bulk_entries(
         except (ValueError, ApiError) as exc:
             errors.append({"line": line, "message": getattr(exc, "message", None) or str(exc)})
     db.commit()
+    if smarttt is not None:
+        _send_waiting(db, smarttt, ctx)
     return {
         "created": created,
         "updated": updated,
@@ -905,6 +941,44 @@ def bulk_entries(
         "errors": errors[:200],
         "error_count": len(errors),
     }
+
+
+# -- SMARTTT --------------------------------------------------------------------------------
+
+
+def _send_waiting(db: Session, smarttt: SmartttClient, ctx: Context) -> None:
+    """Sends the department's classes SMARTTT doesn't have as on the form; refusals stay on the class."""
+    code = _code(ctx)
+    sections = {
+        s["key"]: s for s in ctx.sections if s.get("department") and compact(s["department"]["code"]) == code
+    }
+    for entry in _term_entries(db, ctx.term["id"]):
+        if entry.department_code == code and entry.key in sections:
+            smarttt_sync.push(smarttt, entry, ctx.smarttt_target(sections[entry.key]), strict=False)
+    db.commit()
+
+
+def send_to_smarttt(
+    db: Session,
+    generator: GeneratorClient,
+    smarttt: SmartttClient,
+    identity: Identity,
+    department_code: str,
+    term_id: str | None,
+) -> dict[str, Any]:
+    """“Send to SMARTTT”: the department's allocations SMARTTT doesn't have yet (it was down, or said no)."""
+    ctx = context(generator, identity, department_code, term_id)
+    _require_allocate(ctx)
+    if not ctx.term.get("smarttt_term_id"):
+        raise ApiError(409, "NOT_IN_SMARTTT", "This term is only in the Timetable Generator, not in SMARTTT.")
+    if not ctx.in_smarttt:
+        raise ApiError(
+            409,
+            "NOT_IN_SMARTTT",
+            "SMARTTT doesn't have the Director's approved timetable yet; nothing can be sent.",
+        )
+    _send_waiting(db, smarttt, ctx)
+    return board(db, generator, identity, department_code, ctx.term["id"])
 
 
 def sort_meetings(meetings: list[dict[str, str]]) -> list[dict[str, str]]:

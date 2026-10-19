@@ -191,19 +191,30 @@ class SmartttClient:
     # -- writes ----------------------------------------------------------------
 
     def set_lecturer(
-        self, key: str, term_id: str, lecturer_id: str | None, expected_lecturer_id: str | None
+        self,
+        key: str,
+        term_id: str,
+        lecturer_id: str | None,
+        expected_lecturer_id: str | None,
+        *,
+        check_expected: bool = True,
     ) -> dict[str, Any]:
         """
         Sets the section's lecturer in SMARTTT, which re-checks clashes and
         weekly hours under a lock. Raises SmartttRefused (code lecturer_clash,
-        max_hours, stale, unknown_lecturer) when it says no.
+        max_hours, stale, unknown_lecturer) when it says no. With
+        `check_expected`, SMARTTT refuses (stale) unless the section still has
+        `expected_lecturer_id`.
         """
+        body: dict[str, Any] = {"lecturer_id": lecturer_id}
+        if check_expected:
+            body["expected_lecturer_id"] = expected_lecturer_id
         try:
             response = self._request(
                 "PATCH",
                 f"/sections/{_path(key)}/lecturer/",
                 params={"term": term_id},
-                json={"lecturer_id": lecturer_id, "expected_lecturer_id": expected_lecturer_id},
+                json=body,
             )
         finally:
             self._cache.clear()

@@ -7,6 +7,7 @@ from tests.conftest import sign_in
 
 
 def _add_lecturer(client, name, **extra):
+    extra.setdefault("staff_number", "TST/" + name.upper().replace(" ", ""))
     response = client.post("/api/form/CS/lecturers", json={"full_name": name, "title": "Dr.", **extra})
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]

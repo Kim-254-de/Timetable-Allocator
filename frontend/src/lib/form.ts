@@ -33,6 +33,12 @@ export interface FormEntry {
   entered_at: string
 }
 
+/** Where a class's lecturer is in SMARTTT (lecturers' timetables, Smart Attendance). */
+export interface SmartttState {
+  state: 'sent' | 'pending' | 'waiting' | 'failed' | null
+  message: string | null
+}
+
 export interface FormRow {
   key: string
   unit_code: string
@@ -46,6 +52,7 @@ export interface FormRow {
   in_timetable: boolean
   entry: FormEntry | null
   problems: { code: string; message: string }[]
+  smarttt: SmartttState
 }
 
 export interface FormLecturer {
@@ -77,7 +84,7 @@ export interface FormBoard {
   can_edit: boolean
   can_submit: boolean
   rows: FormRow[]
-  summary: { classes: number; allocated: number; not_in_timetable: number; problems: number }
+  summary: { classes: number; allocated: number; not_in_timetable: number; problems: number; not_in_smarttt: number }
   lecturers: BoardLecturer[]
   submission: { submitted_by: string; submitted_at: string; entry_count: number; allocated_count: number } | null
 }
@@ -159,6 +166,11 @@ export const useBulkEntries = (code: string, term: string | undefined) =>
 export const useSubmitForm = (code: string, term: string | undefined) =>
   useFormMutation(code, (action: 'submit' | 'reopen') =>
     api.post<FormBoard>(`/form/${dept(code)}/${action}`, null, { params: params(term) }).then((r) => r.data))
+
+/** Sends the department's allocations SMARTTT doesn't have yet (it was down, or said no). */
+export const useSendToSmarttt = (code: string, term: string | undefined) =>
+  useFormMutation(code, () =>
+    api.post<FormBoard>(`/form/${dept(code)}/send-to-smarttt`, null, { params: params(term) }).then((r) => r.data))
 
 export const useSaveLecturer = (code: string) =>
   useFormMutation(code, ({ id, body }: { id?: string; body: Partial<LecturerInput> }) =>
