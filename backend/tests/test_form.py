@@ -95,3 +95,23 @@ def test_editors_cannot_submit_and_director_sees_progress(client, generator):
     progress = client.get("/api/form/progress").json()["data"]
     assert {d["code"] for d in progress["departments"]} == {"CS", "ED"}
     assert client.get("/api/form/CS").json()["data"]["can_edit"] is False
+
+
+def test_a_unit_split_after_allocation_shows_only_its_groups(client, generator):
+    sign_in(client, "STF/0100")
+    jane = _add_lecturer(client, "Jane Otieno", phone="0700")
+    assert _save(client, "COSC 200", lecturer_id=jane, lecture_hours=3).status_code == 200
+    assert _save(client, "COSC 499", unit_title="Project", lecture_hours=1).status_code == 200
+
+    # The Director splits COSC 200 into two groups in the Generator.
+    whole = next(s for s in generator.sections if s["key"] == "COSC200-MAIN")
+    generator.sections.remove(whole)
+    for group in ("GR A", "GR B"):
+        generator.sections.append({**whole, "key": f"COSC200-{group.replace(' ', '')}", "group": group})
+
+    body = client.get("/api/form/CS").json()["data"]
+    codes = [(r["unit_code"], r["group"]) for r in body["rows"]]
+    assert ("COSC 200", "") not in codes
+    assert ("COSC 200", "GR A") in codes and ("COSC 200", "GR B") in codes
+    assert ("COSC 499", "") in codes  # a unit typed in that the timetable never had stays
+    assert next(x for x in body["lecturers"] if x["id"] == jane)["classes"] == 0

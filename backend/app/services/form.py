@@ -438,7 +438,14 @@ def board(
     own = [s for s in ctx.sections if s.get("department") and compact(s["department"]["code"]) == code]
     own_keys = {s["key"] for s in own}
     term_entries = _term_entries(db, ctx.term["id"])
-    mine = {e.key: e for e in term_entries if e.department_code == code}
+    # A unit split into groups (or merged back) after it was allocated leaves an
+    # entry for a group the timetable no longer has: it is not shown, counted or printed.
+    timetabled = {compact(s["unit_code"]) for s in own}
+    mine = {
+        e.key: e
+        for e in term_entries
+        if e.department_code == code and (e.key in own_keys or compact(e.unit_code) not in timetabled)
+    }
 
     rows = []
     for s in own:
