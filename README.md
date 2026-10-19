@@ -135,7 +135,7 @@ to start without `SMARTTT_API_KEY` or with `COOKIE_SECURE=false`.
 
 - Sessions are opaque random tokens in an httpOnly, SameSite=Lax cookie; only
   their SHA-256 is stored. Idle and absolute expiry; sign-out revokes.
-- Every state-changing request needs the CSRF token (`XSRF-TOKEN` cookie
+- Every state-changing request needs the CSRF token (`ta_xsrf` cookie
   echoed as `X-XSRF-TOKEN`).
 - Failed sign-ins are rate limited per identifier and per client address.
 - The PDF export never prints phone numbers.

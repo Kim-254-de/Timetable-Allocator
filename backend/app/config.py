@@ -33,7 +33,8 @@ class Settings(BaseSettings):
 
     # Sign-in sessions: an opaque random token in an httpOnly cookie, stored hashed.
     session_cookie_name: str = "ta_session"
-    csrf_cookie_name: str = "XSRF-TOKEN"
+    # Distinct from the Generator's, so both apps can be signed in on one host.
+    csrf_cookie_name: str = "ta_xsrf"
     csrf_header_name: str = "X-XSRF-TOKEN"
     session_idle_minutes: int = 120
     session_absolute_hours: int = 12

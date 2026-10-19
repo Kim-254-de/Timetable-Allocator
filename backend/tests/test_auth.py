@@ -20,7 +20,7 @@ def test_login_sets_httponly_session_and_csrf_cookie(client, smarttt):
     session_cookie = next(c for c in cookies if c.startswith("ta_session="))
     assert "HttpOnly" in session_cookie
     assert "SameSite=lax" in session_cookie
-    csrf_cookie = next(c for c in cookies if c.startswith("XSRF-TOKEN="))
+    csrf_cookie = next(c for c in cookies if c.startswith("ta_xsrf="))
     assert "HttpOnly" not in csrf_cookie
 
 

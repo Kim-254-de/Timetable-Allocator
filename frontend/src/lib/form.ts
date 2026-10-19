@@ -178,3 +178,19 @@ export const formExportUrl = (code: string, format: 'pdf' | 'docx' | 'xlsx', ter
   `${import.meta.env.VITE_API_URL ?? '/api'}/form/${dept(code)}/export.${format}${term ? `?term=${encodeURIComponent(term)}` : ''}`
 
 export const employmentShort = (t: EmploymentType) => (t === 'part_time' ? 'PT' : 'FT')
+
+const TITLE = /^(dr|prof|mr|mrs|ms|miss|eng|rev)\.?\s+/i
+const KIND = /\s*\((ft|pt)\)\s*$/i
+
+/** "Dr. Jane Otieno (PT)" -> title, name and FT/PT, as typed in the lecturer box. */
+export function splitTyped(typed: string): Pick<LecturerInput, 'title' | 'full_name' | 'employment_type'> {
+  let text = typed.trim()
+  const kind = KIND.exec(text)
+  text = text.replace(KIND, '')
+  const title = TITLE.exec(text)
+  return {
+    title: title ? `${title[1][0].toUpperCase()}${title[1].slice(1).toLowerCase()}.` : 'Dr.',
+    full_name: text.replace(TITLE, '').trim(),
+    employment_type: kind?.[1].toLowerCase() === 'pt' ? 'part_time' : 'full_time',
+  }
+}

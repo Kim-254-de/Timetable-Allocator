@@ -8,6 +8,7 @@ import { errorMessage } from '@/lib/api'
 import {
   employmentShort,
   formExportUrl,
+  splitTyped,
   useBulkEntries,
   useBulkLecturers,
   useDeleteEntry,
@@ -19,6 +20,7 @@ import {
   useSubmitForm,
   type BoardLecturer,
   type FormBoard,
+  type FormLecturer,
   type FormRow,
   type LecturerInput,
 } from '@/lib/form'
@@ -47,6 +49,9 @@ const LECTURER_COLUMNS: BulkColumn[] = [
 
 const hours = (v: number | null | undefined) => (v == null ? '' : String(v))
 const toNumber = (v: string) => (v.trim() === '' ? null : Number(v))
+
+const loadText = (x: BoardLecturer) =>
+  `${x.weekly_hours}h/week${x.max_weekly_hours ? ` of ${x.max_weekly_hours}` : ''}`
 
 /** One department's allocation form: units (from the Timetable Generator) and the department's own lecturers. */
 export function AllocationFormPage() {
@@ -144,6 +149,12 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
           <button onClick={() => setEditing('new')} className="rounded-md border border-slate-300 bg-white px-3 py-2">+ A unit not in the timetable</button>
         </div>
       )}
+      {editable && board.lecturers.length === 0 && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Add your department's lecturers first, with their phone numbers, in the{' '}
+          <Link to={`?${new URLSearchParams(term ? { term, tab: 'lecturers' } : { tab: 'lecturers' })}`} className="font-medium underline">Lecturers</Link> table. Then press Allocate on each unit and pick one.
+        </p>
+      )}
       {remove.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(remove.error)}</p>}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-left text-sm">
@@ -174,7 +185,7 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
                 <td className="px-3 py-2">{hours(r.entry?.practical_hours)}</td>
                 <td className="px-3 py-2">{hours(r.entry?.cf_hours)}</td>
                 <td className="px-3 py-2">
-                  {r.entry?.lecturer ?? <span className="text-slate-400">To be allocated</span>}
+                  {r.entry?.lecturer ?? <span className="text-slate-400">Not allocated</span>}
                   {r.problems.map((p) => <p key={p.message} className="text-xs text-red-700">{p.message}</p>)}
                 </td>
                 <td className="space-x-3 px-3 py-2 text-right whitespace-nowrap">
@@ -207,7 +218,6 @@ function EntryForm({ code, term, board, row, onClose }: {
   code: string; term: string | undefined; board: FormBoard; row: FormRow | null; onClose: () => void
 }) {
   const save = useSaveEntry(code, term)
-  const saveLecturer = useSaveLecturer(code)
   const [unit, setUnit] = useState(row?.unit_code ?? '')
   const [group, setGroup] = useState(row?.group ?? '')
   const [title, setTitle] = useState(row?.unit_title ?? '')
@@ -215,21 +225,12 @@ function EntryForm({ code, term, board, row, onClose }: {
   const [l, setL] = useState(hours(row?.entry?.lecture_hours))
   const [p, setP] = useState(hours(row?.entry?.practical_hours))
   const [cf, setCf] = useState(hours(row?.entry?.cf_hours))
-  const [newName, setNewName] = useState('')
-  const [newKind, setNewKind] = useState<'full_time' | 'part_time'>('full_time')
+  const [adding, setAdding] = useState<string | null>(null)
   const active = board.lecturers.filter((x) => x.active || x.id === lecturer)
 
   // A unit typed in that the timetable has: offer its groups.
   const matching = board.rows.filter((r) => r.in_timetable && r.unit_code.replace(/\s/g, '').toUpperCase() === unit.replace(/\s/g, '').toUpperCase())
   const groups = matching.map((r) => r.group)
-
-  const addLecturer = () => {
-    const name = newName.trim()
-    if (!name) return
-    saveLecturer.mutate({ body: { full_name: name, employment_type: newKind } }, {
-      onSuccess: (created) => { setLecturer(created.id); setNewName('') },
-    })
-  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -245,6 +246,7 @@ function EntryForm({ code, term, board, row, onClose }: {
   }
 
   return (
+    <>
     <Dialog title={row ? `${row.unit_code} ${row.group}`.trim() : 'A unit not in the timetable'} onClose={onClose}>
       <form onSubmit={submit} className="mt-3 space-y-3">
         {row ? (
@@ -279,24 +281,7 @@ function EntryForm({ code, term, board, row, onClose }: {
             )}
           </>
         )}
-        <Field label="Lecturer">
-          <select value={lecturer} onChange={(e) => setLecturer(e.target.value)} className={inputClass}>
-            <option value="">To be allocated</option>
-            {active.map((x: BoardLecturer) => (
-              <option key={x.id} value={x.id}>{x.display} · {x.weekly_hours}h/week{x.max_weekly_hours ? ` of ${x.max_weekly_hours}` : ''}</option>
-            ))}
-          </select>
-        </Field>
-        <div className="flex items-end gap-2 text-sm">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New lecturer: Dr. Jane Otieno" aria-label="New lecturer name"
-            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5" />
-          <select value={newKind} onChange={(e) => setNewKind(e.target.value as 'full_time' | 'part_time')} aria-label="Full or part time"
-            className="rounded-md border border-slate-300 px-2 py-1.5">
-            <option value="full_time">FT</option><option value="part_time">PT</option>
-          </select>
-          <button type="button" onClick={addLecturer} disabled={saveLecturer.isPending} className="rounded-md border border-slate-300 px-3 py-1.5">Add</button>
-        </div>
-        {saveLecturer.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(saveLecturer.error)}</p>}
+        <LecturerPicker lecturers={active} value={lecturer} onChange={setLecturer} onAddNew={setAdding} />
         <div className="grid grid-cols-3 gap-3">
           <Field label="L"><input type="number" min={0} step={0.5} value={l} onChange={(e) => setL(e.target.value)} className={inputClass} /></Field>
           <Field label="P"><input type="number" min={0} step={0.5} value={p} onChange={(e) => setP(e.target.value)} className={inputClass} /></Field>
@@ -311,6 +296,72 @@ function EntryForm({ code, term, board, row, onClose }: {
         </div>
       </form>
     </Dialog>
+    {adding != null && (
+      <LecturerForm code={code} lecturer={null} typed={adding} onClose={() => setAdding(null)}
+        onSaved={(created) => { setLecturer(created.id); setAdding(null) }} />
+    )}
+    </>
+  )
+}
+
+/**
+ * The lecturer for a unit: type a name to find one on the department's list,
+ * or add someone new with their full details (the form prints the phone).
+ */
+function LecturerPicker({ lecturers, value, onChange, onAddNew }: {
+  lecturers: BoardLecturer[]; value: string; onChange: (id: string) => void; onAddNew: (typed: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [changing, setChanging] = useState(false)
+  const chosen = lecturers.find((x) => x.id === value)
+  const typed = query.trim()
+  const q = typed.toLowerCase()
+  const matches = lecturers.filter((x) => !q || `${x.title} ${x.full_name} ${x.staff_number ?? ''} ${x.phone}`.toLowerCase().includes(q))
+  const exact = lecturers.some((x) => x.full_name.toLowerCase() === splitTyped(typed).full_name.toLowerCase())
+
+  return (
+    <div className="text-sm">
+      <p className="font-medium text-slate-700">Lecturer</p>
+      {chosen && !changing ? (
+        <div className="mt-1 flex items-start justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+          <div>
+            <p className="font-medium">{chosen.display}</p>
+            <p className="text-xs text-slate-600">{chosen.phone || 'No phone number yet'} · {loadText(chosen)}</p>
+          </div>
+          <div className="space-x-3 whitespace-nowrap">
+            <button type="button" onClick={() => { setQuery(''); setChanging(true) }} className="text-emerald-700">Change</button>
+            <button type="button" onClick={() => onChange('')} className="text-red-700">Remove</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Type the lecturer's name"
+            aria-label="Lecturer" className={inputClass} />
+          <ul className="mt-1 max-h-52 overflow-y-auto rounded-md border border-slate-200">
+            {matches.map((x) => (
+              <li key={x.id}>
+                <button type="button" onClick={() => { onChange(x.id); setChanging(false) }}
+                  className="flex w-full justify-between gap-3 px-3 py-2 text-left hover:bg-emerald-50">
+                  <span>{x.display}</span>
+                  <span className="text-xs text-slate-500">{x.phone} · {loadText(x)}</span>
+                </button>
+              </li>
+            ))}
+            {typed && !exact && (
+              <li>
+                <button type="button" onClick={() => onAddNew(typed)} className="w-full px-3 py-2 text-left font-medium text-emerald-700 hover:bg-emerald-50">
+                  + Add “{typed}” as a new lecturer
+                </button>
+              </li>
+            )}
+            {!typed && matches.length === 0 && (
+              <li className="px-3 py-2 text-slate-500">No lecturers on your list yet. Type a name to add one.</li>
+            )}
+          </ul>
+          {chosen && <button type="button" onClick={() => setChanging(false)} className="mt-1 text-xs text-slate-600">Keep {chosen.display}</button>}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -335,7 +386,8 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
           <thead className="bg-slate-50 text-xs uppercase text-slate-500">
             <tr>
               <th className="px-3 py-2">Name</th><th className="px-3 py-2">Staff no.</th><th className="px-3 py-2">FT/PT</th>
-              <th className="px-3 py-2">Phone</th><th className="px-3 py-2">Classes</th><th className="px-3 py-2">Hours / week</th><th />
+              <th className="px-3 py-2">Phone</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Classes</th>
+              <th className="px-3 py-2">Hours / week</th><th />
             </tr>
           </thead>
           <tbody>
@@ -344,7 +396,8 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
                 <td className="px-3 py-2 font-medium">{x.title} {x.full_name}{!x.active && ' (inactive)'}</td>
                 <td className="px-3 py-2">{x.staff_number}</td>
                 <td className="px-3 py-2">{employmentShort(x.employment_type)}</td>
-                <td className="px-3 py-2">{x.phone}</td>
+                <td className="px-3 py-2">{x.phone || <span className="text-amber-700">Missing</span>}</td>
+                <td className="px-3 py-2">{x.email}</td>
                 <td className="px-3 py-2">{x.classes}</td>
                 <td className="px-3 py-2">{x.weekly_hours}{x.max_weekly_hours ? ` / ${x.max_weekly_hours}` : ''}</td>
                 <td className="space-x-3 px-3 py-2 text-right">
@@ -356,12 +409,12 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
               </tr>
             ))}
             {board.lecturers.length === 0 && (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-500">No lecturers on the list yet.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">No lecturers on the list yet. Add them here, then allocate them on the Units tab.</td></tr>
             )}
           </tbody>
         </table>
       </div>
-      {editing && <LecturerForm code={code} lecturer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {editing && <LecturerForm code={code} lecturer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => setEditing(null)} />}
       {pasting && (
         <BulkPaste title="Paste lecturers" columns={LECTURER_COLUMNS} templateName="lecturers.csv"
           submit={(rows) => bulk.mutateAsync(rows)} onClose={() => setPasting(false)} />
@@ -370,13 +423,16 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
   )
 }
 
-function LecturerForm({ code, lecturer, onClose }: { code: string; lecturer: BoardLecturer | null; onClose: () => void }) {
+function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
+  code: string; lecturer: BoardLecturer | null; typed?: string; onClose: () => void; onSaved: (saved: FormLecturer) => void
+}) {
   const save = useSaveLecturer(code)
+  const start = typed ? splitTyped(typed) : null
   const [form, setForm] = useState<LecturerInput>({
-    title: lecturer?.title ?? 'Dr.',
-    full_name: lecturer?.full_name ?? '',
+    title: lecturer?.title ?? start?.title ?? 'Dr.',
+    full_name: lecturer?.full_name ?? start?.full_name ?? '',
     staff_number: lecturer?.staff_number ?? '',
-    employment_type: lecturer?.employment_type ?? 'full_time',
+    employment_type: lecturer?.employment_type ?? start?.employment_type ?? 'full_time',
     phone: lecturer?.phone ?? '',
     email: lecturer?.email ?? '',
     max_weekly_hours: lecturer?.max_weekly_hours ?? null,
@@ -390,7 +446,7 @@ function LecturerForm({ code, lecturer, onClose }: { code: string; lecturer: Boa
       // Editing: an empty limit is sent as 0, which clears it.
       max_weekly_hours: form.max_weekly_hours ?? (lecturer ? 0 : null),
     }
-    save.mutate({ id: lecturer?.id, body }, { onSuccess: onClose })
+    save.mutate({ id: lecturer?.id, body }, { onSuccess: onSaved })
   }
   return (
     <Dialog title={lecturer ? `Edit ${lecturer.full_name}` : 'Add a lecturer'} onClose={onClose}>
@@ -410,7 +466,9 @@ function LecturerForm({ code, lecturer, onClose }: { code: string; lecturer: Boa
               <option value="full_time">Full time (FT)</option><option value="part_time">Part time (PT)</option>
             </select>
           </Field>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={inputClass} /></Field>
+          <Field label="Phone" hint="Printed on the allocation form.">
+            <input required type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="07…" className={inputClass} />
+          </Field>
           <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputClass} /></Field>
           <Field label="Max teaching hours a week" hint="Leave blank for no limit.">
             <input type="number" min={1} max={60} value={form.max_weekly_hours ?? ''}
