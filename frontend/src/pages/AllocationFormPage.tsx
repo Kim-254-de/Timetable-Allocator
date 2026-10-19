@@ -262,7 +262,7 @@ function EntryForm({ code, term, board, row, onClose }: {
                 </datalist>
               </Field>
               <Field label="Group">
-                {groups.length > 0 && groups.some(Boolean) ? (
+                {groups.some(Boolean) ? (
                   <select value={group} onChange={(e) => setGroup(e.target.value)} className={inputClass}>
                     <option value="">Choose…</option>
                     {groups.map((g) => <option key={g} value={g}>{g || 'Whole class'}</option>)}

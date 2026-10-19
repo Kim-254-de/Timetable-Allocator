@@ -76,7 +76,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "ix_form_submission_department", "form_submissions", ["generator_term_id", "department_code"], unique=False
+        "ix_form_submission_department",
+        "form_submissions",
+        ["generator_term_id", "department_code"],
+        unique=False,
     )
 
 

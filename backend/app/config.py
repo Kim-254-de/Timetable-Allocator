@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # The Timetable Generator: where each term's units, groups and published
     # meetings come from for the allocation form. GENERATOR_API_KEY must equal
     # ALLOCATOR_API_KEY in the Generator.
-    generator_base_url: str = "http://localhost:8001"
+    generator_base_url: str = "http://localhost:8002"
     generator_api_key: str = ""
     generator_timeout_seconds: float = 15.0
 

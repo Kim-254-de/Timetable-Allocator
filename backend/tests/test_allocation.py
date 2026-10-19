@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.clients.smarttt import get_smarttt
 from app.models import Allocation, AuditLog, Submission
 from tests.conftest import sign_in
 from tests.fake_smarttt import COLLINS, CS, EDU, JANE, OMONDI
@@ -24,7 +25,13 @@ def test_board_shows_owned_sections_with_servicing(client, smarttt):
     assert [s["code"] for s in body["sections"]] == ["COSC 103 GR A", "COSC 103 GR B", "COSC 200"]
     assert body["sections"][0]["servicing"] is True  # taught to Education's students
     assert body["sections"][2]["servicing"] is False
-    assert body["summary"] == {"sections": 3, "allocated": 0, "outstanding": 3, "conflicts": 0}
+    assert body["summary"] == {
+        "sections": 3,
+        "allocated": 0,
+        "outstanding": 3,
+        "conflicts": 0,
+        "needs_attention": 0,
+    }
     assert body["can_submit"] is True
 
 
@@ -267,6 +274,7 @@ def test_repair_publish_flags_moved_and_cleared_classes(client, smarttt):
     # COSC 200 is gone (e.g. that class was removed and re-added).
     smarttt.sections["412-GRA"]["meetings"][0]["room"] = {"id": "STB 9", "code": "STB 9", "capacity": 150}
     smarttt.allocate("500-MAIN", None)
+    get_smarttt().clear_cache()  # the board read above is cached for SMARTTT_CACHE_SECONDS
     smarttt.calls.clear()
     board = client.get(f"/api/departments/{CS}/sessions").json()["data"]
     by_code = {s["code"]: s for s in board["sections"]}
