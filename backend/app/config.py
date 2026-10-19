@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://allocator:allocator@localhost:5432/allocator"
 
-    # SMARTTT, the only system the Allocator talks to.
+    # SMARTTT: sign-in and roles, and the published timetable for the earlier board.
     smarttt_base_url: str = "http://localhost:8000"
     smarttt_api_key: str = ""
     smarttt_timeout_seconds: float = 15.0
@@ -62,7 +62,20 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _production_requirements(self) -> Settings:
         if self.environment == "production":
-            missing = [name for name, value in (("SMARTTT_API_KEY", self.smarttt_api_key),) if not value]
+            missing = [
+                name
+                for name, value in (
+                    ("SMARTTT_API_KEY", self.smarttt_api_key),
+                    ("GENERATOR_API_KEY", self.generator_api_key),
+                )
+                if not value
+            ]
+            # The defaults point at a developer's machine; production must say where things are.
+            missing += [
+                name.upper()
+                for name in ("database_url", "smarttt_base_url", "generator_base_url")
+                if name not in self.model_fields_set
+            ]
             if missing:
                 raise ValueError(f"Missing required settings in production: {', '.join(missing)}")
             if not self.cookie_secure:
