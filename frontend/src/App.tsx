@@ -11,10 +11,10 @@ import { ProgressPage } from '@/pages/ProgressPage'
 
 export function App() {
   const me = useMe()
-  if (me.isPending) return <p className="p-8 text-sm text-slate-500">Loading…</p>
+  if (me.isPending) return <p className="p-8 text-sm text-muted">Loading…</p>
   const unauthenticated = me.isError && me.error instanceof AxiosError && me.error.response?.status === 401
   if (unauthenticated || me.data === null) return <LoginPage />
-  if (me.isError) return <p role="alert" className="p-8 text-sm text-red-700">{errorMessage(me.error)}</p>
+  if (me.isError) return <p role="alert" className="p-8 text-sm text-danger">{errorMessage(me.error)}</p>
 
   return (
     <Routes>
@@ -35,19 +35,19 @@ function Layout() {
   const logout = useLogout()
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-surface text-ink">
+      <header className="border-b-2 border-gold-500 bg-topbar text-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3">
-          <span className="font-semibold text-emerald-800">Timetable Allocator</span>
+          <span className="font-semibold">Timetable Allocator</span>
           <nav className="flex flex-wrap gap-1 text-sm">
             <NavLink to="/" end
-              className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600')}>
+              className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-white/15 text-white' : 'text-brand-100 hover:text-white')}>
               Course allocation
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
-            <span className="text-slate-600">{me.data?.full_name}</span>
-            <button onClick={() => logout.mutate()} className="text-emerald-700">Sign out</button>
+            <span className="text-brand-100">{me.data?.full_name}</span>
+            <button onClick={() => logout.mutate()} className="font-medium text-gold-500 hover:underline">Sign out</button>
           </div>
         </div>
       </header>

@@ -16,10 +16,10 @@ const STATE_LABEL: Record<SectionState, string> = {
   conflict: 'Conflict',
 }
 const STATE_STYLE: Record<SectionState, string> = {
-  allocated: 'bg-emerald-100 text-emerald-800',
-  outstanding: 'bg-amber-100 text-amber-900',
-  unmatched: 'bg-sky-100 text-sky-900',
-  conflict: 'bg-red-100 text-red-800',
+  allocated: 'bg-success-soft text-success',
+  outstanding: 'bg-warning-soft text-warning',
+  unmatched: 'bg-brand-soft text-brand-ink',
+  conflict: 'bg-danger-soft text-danger',
 }
 
 type Filter = 'all' | 'todo' | 'attention' | 'servicing'
@@ -38,11 +38,11 @@ export function DepartmentPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 border-b border-slate-200">
+      <div className="flex gap-2 border-b border-line">
         {(['classes', 'lecturers'] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={clsx('-mb-px border-b-2 px-3 py-2 text-sm font-medium',
-              tab === t ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-slate-600')}>
+              tab === t ? 'border-brand-ink text-brand-ink' : 'border-transparent text-muted')}>
             {t === 'classes' ? 'Classes' : 'Lecturers'}
           </button>
         ))}
@@ -72,24 +72,24 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
     })
   }, [board.data, filter, query])
 
-  if (board.isPending) return <p className="text-sm text-slate-500">Loading the published timetable…</p>
-  if (board.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(board.error)}</p>
+  if (board.isPending) return <p className="text-sm text-muted">Loading the published timetable…</p>
+  if (board.isError) return <p role="alert" className="text-sm text-danger">{errorMessage(board.error)}</p>
   const { summary, submission } = board.data
   const pending = (errorBody(submit.error)?.details as { sections?: string[] } | undefined)?.sections
 
   return (
     <>
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-4">
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-card p-4">
         <div>
-          <p className="text-sm text-slate-600">{termText(board.data.term)}</p>
+          <p className="text-sm text-muted">{termText(board.data.term)}</p>
           <p className="text-lg font-semibold">
             {summary.allocated} of {summary.sections} classes allocated
-            {summary.conflicts > 0 && <span className="ml-2 text-sm text-red-700">{summary.conflicts} conflicts</span>}
+            {summary.conflicts > 0 && <span className="ml-2 text-sm text-danger">{summary.conflicts} conflicts</span>}
             {(summary.needs_attention ?? 0) > 0 && (
-              <span className="ml-2 text-sm text-amber-800">{summary.needs_attention} changed by the new timetable</span>
+              <span className="ml-2 text-sm text-warning">{summary.needs_attention} changed by the new timetable</span>
             )}
           </p>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted">
             {submission?.is_current
               ? `Submitted by ${submission.submitted_by} on ${dateTime(submission.submitted_at)}`
               : submission ? 'Changed since it was submitted — submit again' : 'Not submitted yet'}
@@ -97,18 +97,18 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
         </div>
         <div className="flex items-center gap-2">
           <a href={exportUrl(departmentId, term)}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-2 text-sm">
+            className="inline-flex items-center gap-1 rounded-md border border-line px-3 py-2 text-sm">
             <Download size={16} /> Allocation form (PDF)
           </a>
           {board.data.can_submit && (
             <button onClick={() => submit.mutate()} disabled={submit.isPending}
-              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               {submit.isPending ? 'Submitting…' : 'Submit allocation'}
             </button>
           )}
         </div>
         {submit.isError && (
-          <p role="alert" className="w-full text-sm text-red-700">
+          <p role="alert" className="w-full text-sm text-danger">
             {errorMessage(submit.error)} {pending && pending.slice(0, 10).join(', ')}
             {pending && pending.length > 10 && '…'}
           </p>
@@ -118,18 +118,18 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
       <div className="flex flex-wrap items-center gap-2">
         {(['all', 'todo', 'attention', 'servicing'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)}
-            className={clsx('rounded-full px-3 py-1 text-sm', filter === f ? 'bg-emerald-700 text-white' : 'bg-white border border-slate-200')}>
+            className={clsx('rounded-full px-3 py-1 text-sm', filter === f ? 'bg-brand text-white' : 'bg-card border border-line')}>
             {f === 'all' ? 'All' : f === 'todo' ? 'Still to allocate' : f === 'attention' ? 'Changed' : 'Servicing'}
           </button>
         ))}
         <input type="search" placeholder="Search code, title or lecturer" value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="ml-auto w-64 rounded-md border border-slate-300 px-3 py-1.5 text-sm" />
+          className="ml-auto w-64 rounded-md border border-line px-3 py-1.5 text-sm" />
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
               <th className="px-3 py-2">Class</th>
               <th className="px-3 py-2">Students</th>
@@ -141,36 +141,36 @@ function ClassesTab({ departmentId, term }: { departmentId: number; term: string
           <tbody>
             {sections.map((s) => (
               <tr key={s.key} onClick={() => setSelected(s)}
-                className="cursor-pointer border-t border-slate-100 hover:bg-slate-50">
+                className="cursor-pointer border-t border-line hover:bg-surface">
                 <td className="px-3 py-2">
                   <span className="font-medium">{s.code}</span>
-                  {s.servicing && <span className="ml-2 rounded bg-violet-100 px-1.5 text-xs text-violet-800">servicing</span>}
-                  <span className="block text-slate-600">{s.unit.name}</span>
+                  {s.servicing && <span className="ml-2 rounded bg-brand-soft px-1.5 text-xs text-brand-ink">servicing</span>}
+                  <span className="block text-muted">{s.unit.name}</span>
                 </td>
-                <td className="px-3 py-2 text-slate-600">
+                <td className="px-3 py-2 text-muted">
                   {s.class_rows.map(classRowText).join(', ')}
                   <span className="block text-xs">{s.registered_students} registered</span>
                 </td>
-                <td className="px-3 py-2 text-slate-600">
+                <td className="px-3 py-2 text-muted">
                   {s.meetings.map((m) => <span key={`${m.day_of_week}${m.start_time}`} className="block">{meetingText(m)} · {m.room.code}</span>)}
                 </td>
                 <td className="px-3 py-2">
                   {s.lecturer
-                    ? <>{s.lecturer.full_name} <span className="text-slate-500">{employment(s.lecturer.employment_type)}</span></>
+                    ? <>{s.lecturer.full_name} <span className="text-muted">{employment(s.lecturer.employment_type)}</span></>
                     : s.lecturer_name_text
-                      ? <span className="text-sky-900">{s.lecturer_name_text}</span>
-                      : <span className="text-slate-400">—</span>}
+                      ? <span className="text-brand-ink">{s.lecturer_name_text}</span>
+                      : <span className="text-muted">—</span>}
                 </td>
                 <td className="px-3 py-2">
                   <span className={clsx('rounded px-2 py-0.5 text-xs font-medium', STATE_STYLE[s.state])}>{STATE_LABEL[s.state]}</span>
                   {s.attention.map((a) => (
-                    <span key={a} className="mt-1 block text-xs text-amber-800">{ATTENTION_LABEL[a]}</span>
+                    <span key={a} className="mt-1 block text-xs text-warning">{ATTENTION_LABEL[a]}</span>
                   ))}
                 </td>
               </tr>
             ))}
             {sections.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No classes match.</td></tr>
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">No classes match.</td></tr>
             )}
           </tbody>
         </table>
@@ -188,14 +188,14 @@ function LecturersTab({ departmentId, term }: { departmentId: number; term: stri
   const lecturers = useDepartmentLecturers(departmentId, term)
   const [editing, setEditing] = useState<DepartmentLecturer | null>(null)
 
-  if (lecturers.isPending) return <p className="text-sm text-slate-500">Loading lecturers…</p>
-  if (lecturers.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(lecturers.error)}</p>
+  if (lecturers.isPending) return <p className="text-sm text-muted">Loading lecturers…</p>
+  if (lecturers.isError) return <p role="alert" className="text-sm text-danger">{errorMessage(lecturers.error)}</p>
 
   return (
     <>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
               <th className="px-3 py-2">Lecturer</th>
               <th className="px-3 py-2">Load</th>
@@ -206,21 +206,21 @@ function LecturersTab({ departmentId, term }: { departmentId: number; term: stri
           </thead>
           <tbody>
             {lecturers.data.lecturers.map((l) => (
-              <tr key={l.id} className="border-t border-slate-100">
+              <tr key={l.id} className="border-t border-line">
                 <td className="px-3 py-2">
                   <span className="font-medium">{l.title ? `${l.title} ` : ''}{l.full_name}</span>
-                  <span className="block text-xs text-slate-500">{l.staff_number} · {employment(l.employment_type)}</span>
+                  <span className="block text-xs text-muted">{l.staff_number} · {employment(l.employment_type)}</span>
                 </td>
-                <td className={clsx('px-3 py-2', (l.weekly_hours ?? 0) >= l.max_weekly_teaching_hours && 'text-amber-800')}>
+                <td className={clsx('px-3 py-2', (l.weekly_hours ?? 0) >= l.max_weekly_teaching_hours && 'text-warning')}>
                   {l.weekly_hours ?? 0} / {l.max_weekly_teaching_hours} h
                 </td>
-                <td className="px-3 py-2 text-slate-600">{l.classes.join(', ') || '—'}</td>
-                <td className="px-3 py-2 text-slate-600">
+                <td className="px-3 py-2 text-muted">{l.classes.join(', ') || '—'}</td>
+                <td className="px-3 py-2 text-muted">
                   {l.unavailable.map((p) => <span key={`${p.day_of_week}${p.start_time}`} className="block">{meetingText(p)}</span>)}
                   {l.unavailable.length === 0 && '—'}
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <button onClick={() => setEditing(l)} className="text-sm text-emerald-700">Availability</button>
+                  <button onClick={() => setEditing(l)} className="text-sm text-brand-ink">Availability</button>
                 </td>
               </tr>
             ))}

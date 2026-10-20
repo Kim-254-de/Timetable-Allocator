@@ -11,10 +11,10 @@ export function ProgressPage() {
   const progress = useProgress(term, Boolean(me.data?.timetabling_office))
 
   if (!me.data?.timetabling_office) {
-    return <p className="text-sm text-slate-600">Only the Directorate of Examinations and Timetabling sees this page.</p>
+    return <p className="text-sm text-muted">Only the Directorate of Examinations and Timetabling sees this page.</p>
   }
-  if (progress.isPending) return <p className="text-sm text-slate-500">Loading every department…</p>
-  if (progress.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(progress.error)}</p>
+  if (progress.isPending) return <p className="text-sm text-muted">Loading every department…</p>
+  if (progress.isError) return <p role="alert" className="text-sm text-danger">{errorMessage(progress.error)}</p>
 
   const rows = progress.data.departments
   const outstanding = rows.filter((r) => !r.submission?.is_current)
@@ -22,14 +22,14 @@ export function ProgressPage() {
   return (
     <div className="space-y-4">
       <div>
-        {progress.data.term && <p className="text-sm text-slate-600">{termText(progress.data.term)}</p>}
+        {progress.data.term && <p className="text-sm text-muted">{termText(progress.data.term)}</p>}
         <h1 className="text-lg font-semibold">
           {rows.length - outstanding.length} of {rows.length} departments have submitted
         </h1>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
               <th className="px-3 py-2">Department</th>
               <th className="px-3 py-2">Allocated</th>
@@ -40,12 +40,12 @@ export function ProgressPage() {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.department.id} className="border-t border-slate-100">
+              <tr key={r.department.id} className="border-t border-line">
                 <td className="px-3 py-2">
-                  <Link to={`/departments/${r.department.id}${term ? `?term=${term}` : ''}`} className="font-medium text-emerald-800">
+                  <Link to={`/departments/${r.department.id}${term ? `?term=${term}` : ''}`} className="font-medium text-brand-ink">
                     {r.department.name}
                   </Link>
-                  <span className="block text-xs text-slate-500">{r.department.cod?.full_name ?? 'No COD recorded'}</span>
+                  <span className="block text-xs text-muted">{r.department.cod?.full_name ?? 'No COD recorded'}</span>
                 </td>
                 <td className="px-3 py-2">{r.allocated} / {r.sections}</td>
                 <td className="px-3 py-2">{r.outstanding}</td>

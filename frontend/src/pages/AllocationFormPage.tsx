@@ -73,8 +73,8 @@ export function AllocationFormPage() {
     setSearch(Object.fromEntries(next))
   }
 
-  if (board.isPending) return <p className="text-sm text-slate-500">Loading the allocation form…</p>
-  if (board.isError) return <p role="alert" className="text-sm text-red-700">{errorMessage(board.error)}</p>
+  if (board.isPending) return <p className="text-sm text-muted">Loading the allocation form…</p>
+  if (board.isError) return <p role="alert" className="text-sm text-danger">{errorMessage(board.error)}</p>
   const data = board.data
 
   return (
@@ -82,36 +82,36 @@ export function AllocationFormPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">{data.department.name}</h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted">
             {data.term.name} course allocation · {data.summary.allocated} of {data.summary.classes} classes allocated
             {data.published_version == null && ' · timetable not published yet (no clash checks until it is)'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <select aria-label="Term" value={term ?? ''} onChange={(e) => setParam('term', e.target.value || null)}
-            className="rounded-md border border-slate-300 px-2 py-2">
+            className="rounded-md border border-line px-2 py-2">
             <option value="">Latest term</option>
             {terms.data?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
           {([['pdf', 'PDF'], ['docx', 'Word'], ['xlsx', 'Excel']] as const).map(([format, label]) => (
             <a key={format} href={formExportUrl(code, format, term)}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-2">
+              className="inline-flex items-center gap-1 rounded-md border border-line bg-card px-3 py-2">
               <Download size={16} /> {label}
             </a>
           ))}
           {data.can_submit && data.submission && data.summary.not_in_smarttt > 0 && (
             <button onClick={() => publishAgain.mutate()} disabled={publishAgain.isPending}
-              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 disabled:opacity-50">
+              className="rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-warning disabled:opacity-50">
               {publishAgain.isPending ? 'Publishing…' : `Publish again (${data.summary.not_in_smarttt})`}
             </button>
           )}
           {data.can_submit && (
             data.submission ? (
               <button onClick={() => submit.mutate('reopen')} disabled={submit.isPending}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2">Reopen</button>
+                className="rounded-md border border-line bg-card px-3 py-2">Reopen</button>
             ) : (
               <button onClick={() => submit.mutate('submit')} disabled={submit.isPending}
-                className="rounded-md bg-emerald-700 px-4 py-2 font-medium text-white disabled:opacity-50">
+                className="rounded-md bg-brand px-4 py-2 font-medium text-white disabled:opacity-50">
                 {submit.isPending ? 'Publishing…' : 'Submit & publish'}
               </button>
             )
@@ -120,27 +120,27 @@ export function AllocationFormPage() {
       </div>
 
       {data.submission && (
-        <p role="status" className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        <p role="status" className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
           Submitted and published to SMARTTT by {data.submission.submitted_by} on {new Date(data.submission.submitted_at).toLocaleString()}.
           {data.can_submit ? ' Reopen it to make changes.' : ' The COD can reopen it.'}
         </p>
       )}
-      {submit.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(submit.error)}</p>}
-      {publishAgain.isError && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(publishAgain.error)}</p>}
-      {data.role == null && <p className="text-sm text-slate-500">You are viewing this department's form; only its COD and allocation staff can change it.</p>}
+      {submit.isError && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{errorMessage(submit.error)}</p>}
+      {publishAgain.isError && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{errorMessage(publishAgain.error)}</p>}
+      {data.role == null && <p className="text-sm text-muted">You are viewing this department's form; only its COD and allocation staff can change it.</p>}
 
       <div className="flex gap-2">
         {(['units', 'lecturers'] as const).map((t) => (
           <button key={t} onClick={() => setParam('tab', t === 'units' ? null : t)}
-            className={clsx('rounded-full px-3 py-1 text-sm', tab === t ? 'bg-emerald-700 text-white' : 'border border-slate-200 bg-white')}>
+            className={clsx('rounded-full px-3 py-1 text-sm', tab === t ? 'bg-brand text-white' : 'border border-line bg-card')}>
             {t === 'units' ? `Units (${data.rows.length})` : `Lecturers (${data.lecturers.length})`}
           </button>
         ))}
       </div>
 
       {tab === 'units' ? <UnitsTab code={code} term={term} board={data} /> : <LecturersTab code={code} board={data} />}
-      <p className="text-xs text-slate-500">
-        Units and groups come from the Timetable Generator. <Link to="/" className="text-emerald-700">All departments</Link>
+      <p className="text-xs text-muted">
+        Units and groups come from the Timetable Generator. <Link to="/" className="text-brand-ink">All departments</Link>
       </p>
     </div>
   )
@@ -157,20 +157,20 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
     <section className="space-y-3">
       {editable && (
         <div className="flex flex-wrap justify-end gap-2 text-sm">
-          <button onClick={() => setPasting(true)} className="rounded-md border border-slate-300 bg-white px-3 py-2">Paste from Excel / Word</button>
-          <button onClick={() => setEditing('new')} className="rounded-md border border-slate-300 bg-white px-3 py-2">+ A unit not in the timetable</button>
+          <button onClick={() => setPasting(true)} className="rounded-md border border-line bg-card px-3 py-2">Paste from Excel / Word</button>
+          <button onClick={() => setEditing('new')} className="rounded-md border border-line bg-card px-3 py-2">+ A unit not in the timetable</button>
         </div>
       )}
       {editable && board.lecturers.length === 0 && (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
           Add your department's lecturers first, with their phone numbers, in the{' '}
           <Link to={`?${new URLSearchParams(term ? { term, tab: 'lecturers' } : { tab: 'lecturers' })}`} className="font-medium underline">Lecturers</Link> table. Then press Allocate on each unit and pick one.
         </p>
       )}
-      {remove.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(remove.error)}</p>}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      {remove.isError && <p role="alert" className="text-sm text-danger">{errorMessage(remove.error)}</p>}
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
               <th className="px-3 py-2">Course code</th><th className="px-3 py-2">Course title</th>
               <th className="px-3 py-2">Class</th><th className="px-3 py-2">When</th>
@@ -180,38 +180,38 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
           </thead>
           <tbody>
             {board.rows.map((r) => (
-              <tr key={r.key} className={clsx('border-t border-slate-100 align-top', r.problems.length > 0 && 'bg-red-50')}>
+              <tr key={r.key} className={clsx('border-t border-line align-top', r.problems.length > 0 && 'bg-danger-soft')}>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{r.unit_code} {r.group}</td>
                 <td className="px-3 py-2">
                   {r.unit_title}
-                  {!r.in_timetable && <span className="ml-1 rounded bg-amber-100 px-1 text-xs text-amber-900">not in timetable</span>}
+                  {!r.in_timetable && <span className="ml-1 rounded bg-warning-soft px-1 text-xs text-warning">not in timetable</span>}
                 </td>
-                <td className="px-3 py-2 text-xs text-slate-600">
+                <td className="px-3 py-2 text-xs text-muted">
                   {r.class_rows.map((c) => c.label).join(', ')}
-                  {r.servicing && <span className="ml-1 rounded bg-sky-100 px-1 text-sky-900">servicing</span>}
+                  {r.servicing && <span className="ml-1 rounded bg-brand-soft px-1 text-brand-ink">servicing</span>}
                 </td>
-                <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
+                <td className="px-3 py-2 text-xs text-muted whitespace-nowrap">
                   {r.meetings.map((m) => <div key={`${m.day_of_week}${m.start_time}`}>{m.day_of_week} {m.start_time}–{m.end_time} {m.room}</div>)}
                 </td>
                 <td className="px-3 py-2">{hours(r.entry?.lecture_hours)}</td>
                 <td className="px-3 py-2">{hours(r.entry?.practical_hours)}</td>
                 <td className="px-3 py-2">{hours(r.entry?.cf_hours)}</td>
                 <td className="px-3 py-2">
-                  {r.entry?.lecturer ?? <span className="text-slate-400">Not allocated</span>}
+                  {r.entry?.lecturer ?? <span className="text-muted">Not allocated</span>}
                   <SmartttBadge smarttt={r.smarttt} />
-                  {r.problems.map((p) => <p key={p.message} className="text-xs text-red-700">{p.message}</p>)}
+                  {r.problems.map((p) => <p key={p.message} className="text-xs text-danger">{p.message}</p>)}
                 </td>
                 <td className="space-x-3 px-3 py-2 text-right whitespace-nowrap">
-                  {editable && <button onClick={() => setEditing(r)} className="text-emerald-700">{r.entry ? 'Edit' : 'Allocate'}</button>}
+                  {editable && <button onClick={() => setEditing(r)} className="text-brand-ink">{r.entry ? 'Edit' : 'Allocate'}</button>}
                   {editable && r.entry && (
                     <button onClick={() => { if (window.confirm(`Clear ${r.unit_code} ${r.group}?`)) remove.mutate(r.entry!.id) }}
-                      className="text-red-700">Clear</button>
+                      className="text-danger">Clear</button>
                   )}
                 </td>
               </tr>
             ))}
             {board.rows.length === 0 && (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-muted">
                 The Timetable Generator has no units for this department in this term yet.
               </td></tr>
             )}
@@ -230,10 +230,10 @@ function UnitsTab({ code, term, board }: { code: string; term: string | undefine
 /** Whether SMARTTT (lecturers' timetables, Smart Attendance) has this class's lecturer. */
 function SmartttBadge({ smarttt }: { smarttt: SmartttState }) {
   if (smarttt.state == null) return null
-  if (smarttt.state === 'sent') return <span className="block text-xs text-emerald-700">Published to SMARTTT</span>
-  if (smarttt.state === 'pending') return <span className="block text-xs text-slate-500">Not published yet</span>
+  if (smarttt.state === 'sent') return <span className="block text-xs text-success">Published to SMARTTT</span>
+  if (smarttt.state === 'pending') return <span className="block text-xs text-muted">Not published yet</span>
   return (
-    <span className={clsx('block text-xs', smarttt.state === 'waiting' ? 'text-slate-500' : 'text-amber-800')}>
+    <span className={clsx('block text-xs', smarttt.state === 'waiting' ? 'text-muted' : 'text-warning')}>
       {smarttt.state === 'waiting' ? 'Not in SMARTTT yet' : 'Not in SMARTTT'}{smarttt.message ? `: ${smarttt.message}` : ''}
     </span>
   )
@@ -275,7 +275,7 @@ function EntryForm({ code, term, board, row, onClose }: {
     <Dialog title={row ? `${row.unit_code} ${row.group}`.trim() : 'A unit not in the timetable'} onClose={onClose}>
       <form onSubmit={submit} className="mt-3 space-y-3">
         {row ? (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted">
             {row.unit_title} · {row.class_rows.map((c) => c.label).join(', ')}
             {row.meetings.length > 0 && ` · ${row.meetings.map((m) => `${m.day_of_week} ${m.start_time}–${m.end_time}`).join(', ')}`}
           </p>
@@ -312,10 +312,10 @@ function EntryForm({ code, term, board, row, onClose }: {
           <Field label="P"><input type="number" min={0} step={0.5} value={p} onChange={(e) => setP(e.target.value)} className={inputClass} /></Field>
           <Field label="CF"><input type="number" min={0} step={0.5} value={cf} onChange={(e) => setCf(e.target.value)} className={inputClass} /></Field>
         </div>
-        {save.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(save.error)}</p>}
+        {save.isError && <p role="alert" className="text-sm text-danger">{errorMessage(save.error)}</p>}
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-2 text-sm">Cancel</button>
-          <button type="submit" disabled={save.isPending} className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50">
+          <button type="button" onClick={onClose} className="rounded-md border border-line px-3 py-2 text-sm">Cancel</button>
+          <button type="submit" disabled={save.isPending} className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:opacity-50">
             {save.isPending ? 'Checking…' : 'Save'}
           </button>
         </div>
@@ -346,44 +346,44 @@ function LecturerPicker({ lecturers, value, onChange, onAddNew }: {
 
   return (
     <div className="text-sm">
-      <p className="font-medium text-slate-700">Lecturer</p>
+      <p className="font-medium text-ink">Lecturer</p>
       {chosen && !changing ? (
-        <div className="mt-1 flex items-start justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <div className="mt-1 flex items-start justify-between gap-3 rounded-md border border-line bg-brand-soft px-3 py-2">
           <div>
             <p className="font-medium">{chosen.display}</p>
-            <p className="text-xs text-slate-600">{chosen.phone || 'No phone number yet'} · {loadText(chosen)}</p>
+            <p className="text-xs text-muted">{chosen.phone || 'No phone number yet'} · {loadText(chosen)}</p>
           </div>
           <div className="space-x-3 whitespace-nowrap">
-            <button type="button" onClick={() => { setQuery(''); setChanging(true) }} className="text-emerald-700">Change</button>
-            <button type="button" onClick={() => onChange('')} className="text-red-700">Remove</button>
+            <button type="button" onClick={() => { setQuery(''); setChanging(true) }} className="text-brand-ink">Change</button>
+            <button type="button" onClick={() => onChange('')} className="text-danger">Remove</button>
           </div>
         </div>
       ) : (
         <>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Type the lecturer's name"
             aria-label="Lecturer" className={inputClass} />
-          <ul className="mt-1 max-h-52 overflow-y-auto rounded-md border border-slate-200">
+          <ul className="mt-1 max-h-52 overflow-y-auto rounded-md border border-line">
             {matches.map((x) => (
               <li key={x.id}>
                 <button type="button" onClick={() => { onChange(x.id); setChanging(false) }}
-                  className="flex w-full justify-between gap-3 px-3 py-2 text-left hover:bg-emerald-50">
+                  className="flex w-full justify-between gap-3 px-3 py-2 text-left hover:bg-brand-soft">
                   <span>{x.display}</span>
-                  <span className="text-xs text-slate-500">{x.phone} · {loadText(x)}</span>
+                  <span className="text-xs text-muted">{x.phone} · {loadText(x)}</span>
                 </button>
               </li>
             ))}
             {typed && !exact && (
               <li>
-                <button type="button" onClick={() => onAddNew(typed)} className="w-full px-3 py-2 text-left font-medium text-emerald-700 hover:bg-emerald-50">
+                <button type="button" onClick={() => onAddNew(typed)} className="w-full px-3 py-2 text-left font-medium text-brand-ink hover:bg-brand-soft">
                   + Add “{typed}” as a new lecturer
                 </button>
               </li>
             )}
             {!typed && matches.length === 0 && (
-              <li className="px-3 py-2 text-slate-500">No lecturers on your list yet. Type a name to add one.</li>
+              <li className="px-3 py-2 text-muted">No lecturers on your list yet. Type a name to add one.</li>
             )}
           </ul>
-          {chosen && <button type="button" onClick={() => setChanging(false)} className="mt-1 text-xs text-slate-600">Keep {chosen.display}</button>}
+          {chosen && <button type="button" onClick={() => setChanging(false)} className="mt-1 text-xs text-muted">Keep {chosen.display}</button>}
         </>
       )}
     </div>
@@ -401,14 +401,14 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
     <section className="space-y-3">
       {editable && (
         <div className="flex justify-end gap-2 text-sm">
-          <button onClick={() => setPasting(true)} className="rounded-md border border-slate-300 bg-white px-3 py-2">Paste from Excel</button>
-          <button onClick={() => setEditing('new')} className="rounded-md bg-emerald-700 px-3 py-2 text-white">+ Add a lecturer</button>
+          <button onClick={() => setPasting(true)} className="rounded-md border border-line bg-card px-3 py-2">Paste from Excel</button>
+          <button onClick={() => setEditing('new')} className="rounded-md bg-brand px-3 py-2 text-white">+ Add a lecturer</button>
         </div>
       )}
-      {remove.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(remove.error)}</p>}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      {remove.isError && <p role="alert" className="text-sm text-danger">{errorMessage(remove.error)}</p>}
+      <div className="overflow-x-auto rounded-lg border border-line bg-card">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
               <th className="px-3 py-2">Name</th><th className="px-3 py-2">Staff no.</th><th className="px-3 py-2">FT/PT</th>
               <th className="px-3 py-2">Phone</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Classes</th>
@@ -417,24 +417,24 @@ function LecturersTab({ code, board }: { code: string; board: FormBoard }) {
           </thead>
           <tbody>
             {board.lecturers.map((x) => (
-              <tr key={x.id} className={clsx('border-t border-slate-100', !x.active && 'text-slate-400')}>
+              <tr key={x.id} className={clsx('border-t border-line', !x.active && 'text-muted')}>
                 <td className="px-3 py-2 font-medium">{x.title} {x.full_name}{!x.active && ' (inactive)'}</td>
-                <td className="px-3 py-2">{x.staff_number || <span className="text-amber-700">Missing</span>}</td>
+                <td className="px-3 py-2">{x.staff_number || <span className="text-warning">Missing</span>}</td>
                 <td className="px-3 py-2">{employmentShort(x.employment_type)}</td>
-                <td className="px-3 py-2">{x.phone || <span className="text-amber-700">Missing</span>}</td>
+                <td className="px-3 py-2">{x.phone || <span className="text-warning">Missing</span>}</td>
                 <td className="px-3 py-2">{x.email}</td>
                 <td className="px-3 py-2">{x.classes}</td>
                 <td className="px-3 py-2">{x.weekly_hours}{x.max_weekly_hours ? ` / ${x.max_weekly_hours}` : ''}</td>
                 <td className="space-x-3 px-3 py-2 text-right">
-                  {editable && <button onClick={() => setEditing(x)} className="text-emerald-700">Edit</button>}
+                  {editable && <button onClick={() => setEditing(x)} className="text-brand-ink">Edit</button>}
                   {editable && (
-                    <button onClick={() => { if (window.confirm(`Remove ${x.full_name}?`)) remove.mutate(x.id) }} className="text-red-700">Remove</button>
+                    <button onClick={() => { if (window.confirm(`Remove ${x.full_name}?`)) remove.mutate(x.id) }} className="text-danger">Remove</button>
                   )}
                 </td>
               </tr>
             ))}
             {board.lecturers.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">No lecturers on the list yet. Add them here, then allocate them on the Units tab.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-muted">No lecturers on the list yet. Add them here, then allocate them on the Units tab.</td></tr>
             )}
           </tbody>
         </table>
@@ -503,10 +503,10 @@ function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
             <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Active
           </label>
         </div>
-        {save.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(save.error)}</p>}
+        {save.isError && <p role="alert" className="text-sm text-danger">{errorMessage(save.error)}</p>}
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-md border border-slate-300 px-3 py-2 text-sm">Cancel</button>
-          <button type="submit" disabled={save.isPending} className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50">Save</button>
+          <button type="button" onClick={onClose} className="rounded-md border border-line px-3 py-2 text-sm">Cancel</button>
+          <button type="submit" disabled={save.isPending} className="rounded-md bg-brand px-4 py-2 text-sm text-white disabled:opacity-50">Save</button>
         </div>
       </form>
     </Dialog>

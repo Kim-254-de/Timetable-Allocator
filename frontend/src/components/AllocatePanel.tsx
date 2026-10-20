@@ -56,31 +56,31 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
   return (
     <aside
       aria-label={`Allocate ${section.code}`}
-      className="fixed inset-y-0 right-0 z-20 flex w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-xl"
+      className="fixed inset-y-0 right-0 z-20 flex w-full max-w-xl flex-col border-l border-line bg-card shadow-xl"
     >
-      <header className="flex items-start justify-between border-b border-slate-200 p-4">
+      <header className="flex items-start justify-between border-b border-line p-4">
         <div>
           <h2 className="text-lg font-semibold">{section.code}</h2>
-          <p className="text-sm text-slate-600">{section.unit.name}</p>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-muted">{section.unit.name}</p>
+          <p className="mt-1 text-sm text-muted">
             {section.meetings.map((m) => `${meetingText(m)} · ${m.room.code}`).join('; ')}
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted">
             {section.class_rows.map(classRowText).join(', ')} · {section.registered_students} registered
           </p>
         </div>
-        <button onClick={onClose} aria-label="Close" className="rounded p-1 hover:bg-slate-100">
+        <button onClick={onClose} aria-label="Close" className="rounded p-1 hover:bg-surface">
           <X size={18} />
         </button>
       </header>
 
-      <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2 text-sm">
-        <span className="text-slate-600">Show lecturers from</span>
+      <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
+        <span className="text-muted">Show lecturers from</span>
         {(['department', 'all'] as const).map((s) => (
           <button
             key={s}
             onClick={() => setScope(s)}
-            className={clsx('rounded-full px-3 py-1', scope === s ? 'bg-emerald-700 text-white' : 'bg-slate-100')}
+            className={clsx('rounded-full px-3 py-1', scope === s ? 'bg-brand text-white' : 'bg-surface')}
           >
             {s === 'department' ? 'This department' : 'All departments'}
           </button>
@@ -88,8 +88,8 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {candidates.isPending && <p className="text-sm text-slate-500">Checking who is free…</p>}
-        {candidates.isError && <p className="text-sm text-red-700">{errorMessage(candidates.error)}</p>}
+        {candidates.isPending && <p className="text-sm text-muted">Checking who is free…</p>}
+        {candidates.isError && <p className="text-sm text-danger">{errorMessage(candidates.error)}</p>}
         <ul className="space-y-2">
           {candidates.data?.candidates.map((c) => {
             const why = reasons(c)
@@ -99,7 +99,7 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
                 <label
                   className={clsx(
                     'flex gap-3 rounded-lg border p-3 text-sm',
-                    chosen === c.lecturer.id ? 'border-emerald-600 bg-emerald-50' : 'border-slate-200',
+                    chosen === c.lecturer.id ? 'border-brand-ink bg-brand-soft' : 'border-line',
                     !selectable && 'opacity-60',
                   )}
                 >
@@ -116,15 +116,15 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
                       {c.lecturer.title ? `${c.lecturer.title} ` : ''}
                       {c.lecturer.full_name}
                     </span>{' '}
-                    <span className="text-slate-500">
+                    <span className="text-muted">
                       {employment(c.lecturer.employment_type)} · {c.weekly_hours}/{c.lecturer.max_weekly_teaching_hours} h
                     </span>
-                    {c.current && <span className="ml-2 rounded bg-slate-200 px-1.5 text-xs">current</span>}
+                    {c.current && <span className="ml-2 rounded bg-line px-1.5 text-xs">current</span>}
                     {c.free ? (
-                      <span className="block text-emerald-700">Free at this time</span>
+                      <span className="block text-success">Free at this time</span>
                     ) : (
                       why.map((r) => (
-                        <span key={r} className="block text-amber-800">
+                        <span key={r} className="block text-warning">
                           {r}
                         </span>
                       ))
@@ -138,9 +138,9 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
       </div>
 
       {canAllocate && (
-        <footer className="space-y-3 border-t border-slate-200 p-4">
+        <footer className="space-y-3 border-t border-line p-4">
           <fieldset className="grid grid-cols-3 gap-2 text-sm">
-            <legend className="mb-1 text-slate-600">Semester hours on the allocation form (optional)</legend>
+            <legend className="mb-1 text-muted">Semester hours on the allocation form (optional)</legend>
             {(
               [
                 ['lecture', 'L'],
@@ -149,20 +149,20 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
               ] as const
             ).map(([field, label]) => (
               <label key={field} className="block">
-                <span className="text-xs font-medium text-slate-600">{label}</span>
+                <span className="text-xs font-medium text-muted">{label}</span>
                 <input
                   type="number"
                   min={0}
                   step={0.5}
                   value={hours[field]}
                   onChange={(e) => setHours({ ...hours, [field]: e.target.value })}
-                  className="w-full rounded-md border border-slate-300 px-2 py-1"
+                  className="w-full rounded-md border border-line px-2 py-1"
                 />
               </label>
             ))}
           </fieldset>
           {failure && (
-            <div role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
               {errorMessage(save.error)}
               {clashDetails?.map((d) => (
                 <span key={d.clashes_with} className="block">
@@ -175,14 +175,14 @@ export function AllocatePanel({ section, departmentId, term, canAllocate, onClos
             <button
               onClick={() => submit(null)}
               disabled={save.isPending || current === null}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+              className="rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50"
             >
               Clear lecturer
             </button>
             <button
               onClick={() => submit(chosen)}
               disabled={save.isPending || chosen === null}
-              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
+              className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-strong disabled:opacity-50"
             >
               {save.isPending ? 'Saving…' : 'Save allocation'}
             </button>
