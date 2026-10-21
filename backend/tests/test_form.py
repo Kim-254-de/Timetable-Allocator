@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.models import FormEntry, Lecturer
+from app.models import AuditLog, FormEntry, Lecturer
 from tests.conftest import sign_in
 
 
@@ -116,3 +116,67 @@ def test_a_unit_split_after_allocation_shows_only_its_groups(client, generator):
     assert ("COSC 200", "GR A") in codes and ("COSC 200", "GR B") in codes
     assert ("COSC 499", "") in codes  # a unit typed in that the timetable never had stays
     assert next(x for x in body["lecturers"] if x["id"] == jane)["classes"] == 0
+
+
+def test_a_staff_number_twice_in_one_file_is_refused_not_merged(client, generator, db):
+    sign_in(client, "STF/0100")
+    rows = [
+        {
+            "Name": "Dr. Jane Otieno (FT)",
+            "Staff number": "TUN/STF/0123",
+            "Phone": "0712345678",
+            "Max hours": "18",
+        },
+        {
+            "Name": "Dr. James Ng'ang'a",
+            "Staff number": "TUN/STF/0124",
+            "Phone": "0741179808",
+            "Max hours": "18",
+        },
+        {
+            "Name": "Dr. Peter Muriithi",
+            "Staff number": "TUN/STF/0124",
+            "Phone": "0741179809",
+            "Max hours": "18",
+        },
+    ]
+    body = client.post("/api/form/CS/lecturers/bulk", json={"rows": rows}).json()["data"]
+    assert body["created"] == 2 and body["updated"] == 0
+    assert body["errors"] == [
+        {
+            "line": 3,
+            "message": "staff number TUN/STF/0124 is also on row 2 (Dr. James Ng'ang'a); "
+            "each lecturer needs their own staff number",
+        }
+    ]
+    assert sorted(lec.full_name for lec in db.scalars(select(Lecturer))) == ["James Ng'ang'a", "Jane Otieno"]
+
+    # The next file can't rename James by reusing his staff number either.
+    again = client.post(
+        "/api/form/CS/lecturers/bulk",
+        json={
+            "rows": [{"Name": "Dr. Peter Muriithi", "Staff number": "tun/stf/0124", "Phone": "0741179809"}]
+        },
+    ).json()["data"]
+    assert again["created"] == 0 and again["updated"] == 0
+    assert "already on the list as James Ng'ang'a" in again["errors"][0]["message"]
+    # The same person again (spelt differently) is still an update.
+    same = client.post(
+        "/api/form/CS/lecturers/bulk",
+        json={"rows": [{"Name": "Dr. James Nganga", "Staff number": "TUN/STF/0124", "Phone": "0700000000"}]},
+    ).json()["data"]
+    assert same["updated"] == 1 and same["errors"] == []
+    # An update from a file is in the audit log like any other change.
+    changed = db.scalars(select(AuditLog).where(AuditLog.action == "lecturer.update")).all()
+    assert [(a.before["phone"], a.after["phone"]) for a in changed] == [("0741179808", "0700000000")]
+
+
+def test_a_class_twice_in_one_pasted_form_is_refused(client, generator):
+    sign_in(client, "STF/0100")
+    rows = [
+        {"Course code": "COSC 200", "L": "3", "Lecturer": "Dr. Joseph Omollo"},
+        {"Course code": "COSC 200", "L": "2", "Lecturer": "Dr. Jane Otieno"},
+    ]
+    body = client.post("/api/form/CS/entries/bulk", json={"rows": rows}).json()["data"]
+    assert body["created"] == 1
+    assert body["errors"] == [{"line": 2, "message": "COSC 200 is also on row 1"}]

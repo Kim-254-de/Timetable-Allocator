@@ -821,6 +821,10 @@ def bulk_lecturers(
     _require_allocate(ctx)
     created = updated = 0
     errors: list[dict[str, Any]] = []
+    # Each lecturer once per file: a repeat is a mistake (two people given one
+    # staff number), never a reason to overwrite the earlier row.
+    staff_rows: dict[str, tuple[int, str]] = {}
+    lecturer_rows: dict[uuid.UUID, int] = {}
     for line, raw in enumerate(rows, start=1):
         r = _clean(raw)
         try:
@@ -843,12 +847,40 @@ def bulk_lecturers(
                 fields["max_weekly_hours"] = (
                     int(float(r.get("max_hours") or r.get("max_weekly_hours") or 0)) or None
                 )
-            existing = _find_lecturer(db, _code(ctx), fields["staff_number"], name)
+            staff = (fields["staff_number"] or "").strip().upper()
+            if staff in staff_rows:
+                earlier, earlier_name = staff_rows[staff]
+                raise ValueError(
+                    f"staff number {staff} is also on row {earlier} ({earlier_name}); "
+                    "each lecturer needs their own staff number"
+                )
+            existing = _find_lecturer(db, _code(ctx), staff or None, name)
+            if existing is not None and existing.id in lecturer_rows:
+                raise ValueError(f"{name} is also on row {lecturer_rows[existing.id]}")
+            if existing is not None and staff and not same_name(existing.full_name, name):
+                raise ValueError(
+                    f"staff number {staff} is already on the list as {existing.full_name}; "
+                    "check the staff number, or change the name on their own record"
+                )
+            if staff:
+                staff_rows[staff] = (line, name_cell)
             if existing is not None:
+                lecturer_rows[existing.id] = line
+                before = lecturer_dict(existing)
                 _apply_lecturer(db, existing, {k: v for k, v in fields.items() if v not in (None, "")})
+                db.flush()
+                audit(
+                    db,
+                    identity,
+                    "lecturer.update",
+                    "lecturer",
+                    str(existing.id),
+                    before,
+                    lecturer_dict(existing),
+                )
                 updated += 1
             else:
-                create_lecturer(db, identity, ctx, fields, commit=False)
+                lecturer_rows[create_lecturer(db, identity, ctx, fields, commit=False).id] = line
                 created += 1
             db.flush()
         except (ValueError, ApiError) as exc:
@@ -867,15 +899,20 @@ def _find_lecturer(db: Session, department_code: str, staff_number: str | None, 
         )
         if found is not None:
             return found
-    wanted = " ".join(name.lower().split())
+    # Same name but another staff number: a different person who shares the name.
     return next(
         (
             lec
             for lec in department_lecturers(db, department_code)
-            if " ".join(lec.full_name.lower().split()) == wanted
+            if same_name(lec.full_name, name) and not (staff_number and lec.staff_number)
         ),
         None,
     )
+
+
+def same_name(a: str, b: str) -> bool:
+    """'James Ng'ang'a' and 'james  nganga' are one name: letters only, any case."""
+    return re.sub(r"[^a-z]", "", a.lower()) == re.sub(r"[^a-z]", "", b.lower())
 
 
 def bulk_entries(
@@ -896,6 +933,7 @@ def bulk_entries(
     _require_open(db, ctx)
     created = updated = lecturers_added = 0
     errors: list[dict[str, Any]] = []
+    class_rows: dict[str, int] = {}  # each class once per file; a repeat would overwrite the earlier row
     for line, raw in enumerate(rows, start=1):
         r = _clean(raw)
         try:
@@ -910,6 +948,10 @@ def bulk_entries(
                 unit = unit[: match.start()].strip()
             elif group and not group.upper().startswith("GR"):
                 group = f"GR {group.upper()}"
+            key = form_key(unit, group)
+            if key in class_rows:
+                raise ValueError(f"{unit} {group}".strip() + f" is also on row {class_rows[key]}")
+            class_rows[key] = line
             lecturer_id = None
             name_cell = r.get("lecturer")
             if name_cell:
