@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ from app.clients.smarttt import SmartttClient, get_smarttt
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.errors import ApiError, ok
-from app.services import allocation, availability, export, form, form_export
+from app.services import allocation, availability, export, form, form_export, spreadsheet
 
 router = APIRouter()
 
@@ -42,6 +43,20 @@ LecturerId = Annotated[str, Path(pattern=r"^[0-9a-fA-F-]{32,36}$")]
 def health(db: Db) -> dict[str, Any]:
     db.execute(text("SELECT 1"))
     return ok({"status": "ok"})
+
+
+# -- Excel files -------------------------------------------------------------------------
+
+
+@router.post("/spreadsheets/read")
+async def read_spreadsheet(request: Request, identity: Me) -> dict[str, Any]:
+    """The cells of a prepared .xlsx, sent as the raw request body, for the "Paste from Excel" dialogs."""
+    content = bytearray()
+    async for chunk in request.stream():
+        content += chunk
+        if len(content) > spreadsheet.MAX_FILE_BYTES:
+            raise ApiError(413, "FILE_TOO_LARGE", spreadsheet.TOO_BIG)
+    return ok(await run_in_threadpool(spreadsheet.read_workbook, bytes(content)))
 
 
 # -- sign-in -------------------------------------------------------------------
