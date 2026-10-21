@@ -1,8 +1,12 @@
-# Local stack: PostgreSQL, the API and the web app (http://localhost:8080).
-# Reads secrets from .env (copy .env.example). SMARTTT runs separately.
+# The whole Allocator: PostgreSQL, the API and the web app (http://localhost:8080).
+# Reads secrets from .env (copy .env.example). SMARTTT and the Generator run
+# separately: GENERATOR_BASE_URL must be the Generator's address as seen from
+# this server, never localhost. In production put an HTTPS proxy in front of
+# `web` (COOKIE_SECURE=true needs HTTPS) and back up the db-data volume.
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: allocator
       POSTGRES_USER: allocator
@@ -16,6 +20,7 @@ services:
 
   api:
     build: ./backend
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://allocator:${POSTGRES_PASSWORD}@db:5432/allocator
@@ -26,12 +31,14 @@ services:
 
   web:
     build: ./frontend
+    restart: unless-stopped
     environment:
       API_UPSTREAM: http://api:8000
     ports:
       - "8080:8080"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   db-data:

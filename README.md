@@ -128,6 +128,27 @@ proxies `/api` to `http://localhost:8001` (override with `API_PROXY_TARGET`).
 Everything in containers: `cp .env.example .env`, fill it in, `docker compose up --build`,
 then open http://localhost:8080.
 
+## Deploying with Docker
+
+On a Linux server with Docker and the Compose plugin:
+
+```bash
+cp .env.example .env     # fill in POSTGRES_PASSWORD, SMARTTT_*, GENERATOR_BASE_URL,
+                         # GENERATOR_API_KEY
+docker compose up -d --build
+```
+
+This runs PostgreSQL, the API (migrations run as it starts) and the web app on
+port 8080, all restarting on their own. Then:
+
+- Put an HTTPS proxy (Caddy, nginx, Traefik, or the host's) in front of port 8080;
+  sign-in cookies are `Secure` and need HTTPS. Add `Strict-Transport-Security` there.
+- `GENERATOR_BASE_URL` is the Generator's web address as this server reaches it
+  (e.g. `https://generator.tharaka.ac.ke`), never `localhost`: inside a container
+  that is the container itself.
+- Back up the `db-data` volume (or `pg_dump`) on a schedule.
+- Update: `git pull && docker compose up -d --build`.
+
 ## Checks
 
 ```bash
