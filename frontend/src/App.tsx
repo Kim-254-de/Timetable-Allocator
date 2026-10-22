@@ -8,6 +8,7 @@ import { DepartmentPage } from '@/pages/DepartmentPage'
 import { FormProgressPage } from '@/pages/FormProgressPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ProgressPage } from '@/pages/ProgressPage'
+import { ThemeToggle } from '@/components/ThemeToggle'
 
 export function App() {
   const me = useMe()
@@ -46,6 +47,7 @@ function Layout() {
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
+            <ThemeToggle />
             <span className="text-brand-100">{me.data?.full_name}</span>
             <button onClick={() => logout.mutate()} className="font-medium text-gold-500 hover:underline">Sign out</button>
           </div>
