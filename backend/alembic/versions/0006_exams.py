@@ -66,7 +66,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["unit_id"], ["units.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_practical_department", "practicals", ["generator_term_id", "department_code"], unique=False)
+    op.create_index(
+        "ix_practical_department", "practicals", ["generator_term_id", "department_code"], unique=False
+    )
     op.create_index("ix_practicals_unit_id", "practicals", ["unit_id"], unique=False)
     op.create_table(
         "invigilations",
