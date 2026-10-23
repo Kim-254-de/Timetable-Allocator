@@ -1,10 +1,11 @@
 """
 The Allocator's own data.
 
-The allocation form (what departments fill in): each department's own list
-of lecturers, its allocation rows (unit, group, lecturer, L/P/CF hours) for a
-term of the Timetable Generator, and its submissions. Units and groups are
-read from the Generator; the Allocator keeps no copy of the timetable.
+What departments enter for a term of the Timetable Generator: their own list
+of lecturers, their courses (cohorts), their units with the courses that take
+them, and each unit's groups with a lecturer and the form's L/P/CF hours; and
+each COD's publishing of it to the Director. The Generator imports what is
+published and gives every group its day, time and room.
 
 Also kept from the SMARTTT-based allocation: who allocated each SMARTTT class
 and when, lecturers' unavailability, departments' submissions, the audit
@@ -183,7 +184,7 @@ class LoginAttempt(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-# -- the allocation form ---------------------------------------------------------------
+# -- what departments enter ---------------------------------------------------------------
 
 
 class EmploymentType(enum.StrEnum):
@@ -218,63 +219,145 @@ class Lecturer(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
-class FormEntry(Base):
+class Course(Base):
     """
-    One row of a department's allocation form: a unit (or one group of it) for a
-    term of the Generator, the lecturer given it, and the form's L/P/CF hours.
-    `key` is the class ("COSC103-GRA"); each class has one row per term.
+    A cohort a department teaches this term: programme + year + study semester
+    (+ sub-class), e.g. "BSC.CS Y1S1, 120 students". It becomes a class row in
+    the Generator. Every department can read every course (to pick another
+    department's students for a unit it services), but edits only its own.
+    A cohort is entered once per term, by the department it belongs to.
     """
 
-    __tablename__ = "form_entries"
+    __tablename__ = "courses"
     __table_args__ = (
-        UniqueConstraint("generator_term_id", "key", name="uq_form_entry_term_key"),
-        Index("ix_form_entry_department", "generator_term_id", "department_code"),
+        UniqueConstraint(
+            "generator_term_id", "programme", "year", "semester", "sub_class", name="uq_course_term_cohort"
+        ),
+        Index("ix_course_department", "generator_term_id", "department_code"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     generator_term_id: Mapped[str] = mapped_column(String(64))
     department_code: Mapped[str] = mapped_column(String(32))
-    key: Mapped[str] = mapped_column(String(80))
-    unit_code: Mapped[str] = mapped_column(String(64))
-    unit_title: Mapped[str] = mapped_column(String(255))
-    group_label: Mapped[str] = mapped_column(String(50), default="")
-    # Class row labels as the Generator printed them when the row was saved.
-    class_rows: Mapped[list[str]] = mapped_column(JSON, default=list)
-    lecturer_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("lecturers.id", ondelete="RESTRICT"), nullable=True
+    programme: Mapped[str] = mapped_column(String(64))
+    year: Mapped[int] = mapped_column(Integer)
+    semester: Mapped[int] = mapped_column(Integer)
+    sub_class: Mapped[str] = mapped_column(String(10), default="")
+    students: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    @property
+    def label(self) -> str:
+        """As the Generator prints class rows: 'BSC.CS Y1S1', 'BSC.CS Y1S1 (A)'."""
+        return f"{self.programme} Y{self.year}S{self.semester}" + (
+            f" ({self.sub_class})" if self.sub_class else ""
+        )
+
+
+class Unit(Base):
+    """
+    A unit a department teaches this term, with its weekly pattern and the
+    courses that take it (its own or other departments'). Entered once per
+    term, by the department that owns it.
+    """
+
+    __tablename__ = "units"
+    __table_args__ = (
+        UniqueConstraint("generator_term_id", "code_key", name="uq_unit_term_code"),
+        Index("ix_unit_department", "generator_term_id", "department_code"),
     )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generator_term_id: Mapped[str] = mapped_column(String(64))
+    department_code: Mapped[str] = mapped_column(String(32))
+    code: Mapped[str] = mapped_column(String(64))
+    # The code without spaces or punctuation, upper case: 'COSC 103' and 'cosc103' are one unit.
+    code_key: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(255))
+    weekly_hours: Mapped[int] = mapped_column(Integer)
+    class_length: Mapped[int] = mapped_column(Integer)
+    room_type: Mapped[str] = mapped_column(String(30), default="lecture_hall")
+    # What the unit was when the department last published (services.teaching.signature);
+    # None until then. A unit that differs is "changed since published".
+    published_signature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entered_by_name: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    courses: Mapped[list[UnitCourse]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    groups: Mapped[list[UnitGroup]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="UnitGroup.label"
+    )
+
+
+class UnitCourse(Base):
+    """Which courses take a unit."""
+
+    __tablename__ = "unit_courses"
+
+    unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True)
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("courses.id", ondelete="RESTRICT"), primary_key=True, index=True
+    )
+
+
+class UnitGroup(Base):
+    """
+    One class of a unit: the whole class (label "") or one group of a split
+    ("GR A"), the courses in it, its lecturer and the form's L/P/CF hours.
+    The department decides the split.
+    """
+
+    __tablename__ = "unit_groups"
+    __table_args__ = (UniqueConstraint("unit_id", "label", name="uq_unit_group_label"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(50), default="")
+    lecturer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # Semester hours as written on the department's allocation form.
     lecture_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
     practical_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
     cf_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
-    entered_by_account_id: Mapped[str] = mapped_column(String(64))
-    entered_by_name: Mapped[str] = mapped_column(String(255))
-    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-    # What SMARTTT was last told for this class: its section key there, the
-    # SMARTTT lecturer set on it (None: cleared) and which of this form's
-    # lecturers that was ("" for none), so a change is sent once and SMARTTT
-    # can refuse a stale one. `smarttt_error` says why the last try failed.
-    smarttt_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    smarttt_lecturer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    smarttt_sent_for: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    smarttt_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    smarttt_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    members: Mapped[list[UnitGroupMember]] = relationship(cascade="all, delete-orphan", lazy="selectin")
     lecturer: Mapped[Lecturer | None] = relationship(lazy="joined")
 
 
-class FormSubmission(Base):
-    """A COD submitting their department's allocation form for a term; reopening ends it."""
+class UnitGroupMember(Base):
+    """A course in a group; `students` is its share when the course is split between groups, else None."""
 
-    __tablename__ = "form_submissions"
-    __table_args__ = (Index("ix_form_submission_department", "generator_term_id", "department_code"),)
+    __tablename__ = "unit_group_members"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("unit_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("courses.id", ondelete="RESTRICT"), primary_key=True, index=True
+    )
+    students: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class DepartmentPublication(Base):
+    """
+    A COD publishing their department's teaching for a term to the Director.
+    While it stands (not reopened) the department's courses, units and groups
+    are locked; the COD reopens it to change them.
+    """
+
+    __tablename__ = "department_publications"
+    __table_args__ = (Index("ix_department_publication", "generator_term_id", "department_code"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     generator_term_id: Mapped[str] = mapped_column(String(64))
     department_code: Mapped[str] = mapped_column(String(32))
-    submitted_by_account_id: Mapped[str] = mapped_column(String(64))
-    submitted_by_name: Mapped[str] = mapped_column(String(255))
-    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    entry_count: Mapped[int] = mapped_column(Integer)
-    allocated_count: Mapped[int] = mapped_column(Integer)
+    department_name: Mapped[str] = mapped_column(String(255))
+    published_by_account_id: Mapped[str] = mapped_column(String(64))
+    published_by_name: Mapped[str] = mapped_column(String(255))
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    unit_count: Mapped[int] = mapped_column(Integer)
+    group_count: Mapped[int] = mapped_column(Integer)
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reopened_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

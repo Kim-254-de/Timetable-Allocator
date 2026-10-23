@@ -7,96 +7,30 @@ from typing import Any
 import httpx
 
 TERM = "term-1"
-CS_DEPT = {"id": 100001, "code": "CS", "name": "Computer Science", "smarttt_id": None}
-ED_DEPT = {"id": 100002, "code": "ED", "name": "Education", "smarttt_id": None}
-
-
-def _section(
-    unit: str,
-    group: str,
-    name: str,
-    department: dict[str, Any],
-    rows: list[tuple[str, int, dict[str, Any]]],
-    meetings: list[tuple[str, str, str, str]],
-) -> dict[str, Any]:
-    key = f"{unit.replace(' ', '')}-{group.replace(' ', '') or 'MAIN'}"
-    return {
-        "key": key,
-        "unit_code": unit,
-        "unit_name": name,
-        "group": group,
-        "department": department,
-        "students": sum(r[1] for r in rows),
-        "weekly_hours": 3,
-        "class_rows": [
-            {
-                "label": label,
-                "program_code": label,
-                "study_year": 1,
-                "study_semester": 1,
-                "students": n,
-                "department": {"code": d["code"], "name": d["name"]},
-            }
-            for label, n, d in rows
-        ],
-        "meetings": [
-            {"day_of_week": d, "start_time": s, "end_time": e, "room": r} for d, s, e, r in meetings
-        ],
-    }
 
 
 class FakeGenerator:
     def __init__(self) -> None:
         self.key = "test-generator-key"
-        self.terms = [
-            {"id": TERM, "name": "September - December 2026", "academic_year": "2026/2027", "semester": 1}
+        self.terms: list[dict[str, Any]] = [
+            {
+                "id": TERM,
+                "name": "September - December 2026",
+                "academic_year": "2026/2027",
+                "semester": 1,
+                "published_version": None,
+            }
         ]
-        self.published_version: int | None = 1
-        self.in_smarttt = False  # SMARTTT has the published version
-        self.sections = [
-            _section(
-                "COSC 103",
-                "GR A",
-                "Intro to Programming",
-                CS_DEPT,
-                [("BSC.CS Y1S1", 60, CS_DEPT)],
-                [("TUE", "10:00", "12:00", "STB 1")],
-            ),
-            _section(
-                "COSC 103",
-                "GR B",
-                "Intro to Programming",
-                CS_DEPT,
-                [("BED.SCI Y1S1", 50, ED_DEPT)],
-                [("TUE", "11:00", "13:00", "STB 2")],
-            ),
-            _section(
-                "COSC 200",
-                "",
-                "Data Structures",
-                CS_DEPT,
-                [("BSC.CS Y2S1", 40, CS_DEPT)],
-                [("WED", "08:00", "11:00", "UTC 1")],
-            ),
-            _section(
-                "EDFO 111",
-                "",
-                "Foundations of Education",
-                ED_DEPT,
-                [("BED.SCI Y1S1", 80, ED_DEPT)],
-                [("MON", "08:00", "10:00", "ED 1")],
-            ),
-        ]
+        # Once the Director publishes: class key -> meetings.
+        self.classes: dict[str, list[dict[str, str]]] = {}
 
-    def link_to_smarttt(self, smarttt_term_id: str, keys: dict[str, str], *, sent: bool = True) -> None:
-        """The term came from SMARTTT and (with `sent`) its published version reached it.
-
-        `keys` maps each class's key here to its key in SMARTTT.
-        """
-        self.terms[0]["smarttt_term_id"] = smarttt_term_id
-        self.in_smarttt = sent
-        for s in self.sections:
-            s["smarttt_key"] = keys.get(s["key"])
+    def publish(self, classes: dict[str, list[tuple[str, str, str, str]]]) -> None:
+        """The Director published version 1 with these classes' meetings (day, start, end, room)."""
+        self.terms[0]["published_version"] = 1
+        self.classes = {
+            key: [{"day_of_week": d, "start_time": s, "end_time": e, "room": r} for d, s, e, r in meetings]
+            for key, meetings in classes.items()
+        }
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -107,12 +41,7 @@ class FakeGenerator:
         path = request.url.path.removeprefix("/api/integrations/allocator")
         if path == "/terms":
             return httpx.Response(200, json={"success": True, "data": self.terms})
-        if path == f"/terms/{TERM}/sections":
-            data = {
-                "term": self.terms[0],
-                "published_version": self.published_version,
-                "in_smarttt": self.in_smarttt,
-                "sections": self.sections,
-            }
+        if path == f"/terms/{TERM}/times":
+            data = {"published_version": self.terms[0]["published_version"], "classes": self.classes}
             return httpx.Response(200, json={"success": True, "data": data})
         return httpx.Response(404, json={"success": False})

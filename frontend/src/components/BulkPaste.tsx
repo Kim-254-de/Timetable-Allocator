@@ -244,7 +244,7 @@ export function BulkPaste({
       {failure && <p role="alert" className="text-sm text-danger">{failure}</p>}
       {result && (
         <div className="mt-2 rounded-md bg-surface p-2 text-sm">
-          <p className="text-success">{result.created} added, {result.updated} updated.</p>
+          <p className="text-success">{result.message ?? `${result.created} added, ${result.updated} updated.`}</p>
           {result.error_count > 0 && (
             <>
               <p className="text-danger">{result.error_count} rows skipped:</p>

@@ -1,7 +1,8 @@
 /**
- * The allocation form: units and groups come from the Timetable Generator,
- * each department keeps its own lecturer list and fills in the lecturer and
- * L / P / CF hours for every unit (or group), then downloads it.
+ * What a department enters for a term of the Timetable Generator: its courses
+ * (cohorts), its units with the courses that take them, each unit's groups
+ * with a lecturer and the form's L / P / CF hours, and its own lecturer list.
+ * The COD publishes it to the Director, who adds days, times and rooms.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, get } from './api'
@@ -15,6 +16,14 @@ export interface GeneratorTerm {
   published_version?: number | null
 }
 
+export type RoomType = 'lecture_hall' | 'lab' | 'seminar'
+
+export const ROOM_TYPES: Record<RoomType, string> = {
+  lecture_hall: 'Lecture hall',
+  lab: 'Lab',
+  seminar: 'Seminar room',
+}
+
 export interface FormMeeting {
   day_of_week: string
   start_time: string
@@ -22,37 +31,60 @@ export interface FormMeeting {
   room: string
 }
 
-export interface FormEntry {
+export interface Course {
   id: string
+  department_code: string
+  programme: string
+  year: number
+  semester: number
+  sub_class: string
+  label: string
+  students: number
+}
+
+export interface OwnCourse extends Course {
+  /** Units (any department's) that this course takes. */
+  used_by: string[]
+}
+
+export interface UnitCourse {
+  id: string
+  label: string
+  department_code: string | null
+  students: number
+}
+
+export interface GroupMember extends UnitCourse {
+  /** The group's share when the course is split between groups; null = the whole course. */
+  given_students: number | null
+}
+
+export interface UnitGroup {
+  id: string
+  key: string
+  label: string
+  members: GroupMember[]
+  students: number
   lecturer_id: string | null
   lecturer: string | null
   lecture_hours: number | null
   practical_hours: number | null
   cf_hours: number | null
-  entered_by: string
-  entered_at: string
-}
-
-/** Where a class's lecturer is in SMARTTT (lecturers' timetables, Smart Attendance). */
-export interface SmartttState {
-  state: 'sent' | 'pending' | 'waiting' | 'failed' | 'no_staff_number' | null
-  message: string | null
-}
-
-export interface FormRow {
-  key: string
-  unit_code: string
-  unit_title: string
-  group: string
-  class_rows: { label: string; students: number | null; department_code: string | null }[]
-  students: number | null
-  weekly_hours: number | null
   meetings: FormMeeting[]
+}
+
+export interface Unit {
+  id: string
+  department_code: string
+  code: string
+  title: string
+  weekly_hours: number
+  class_length: number
+  room_type: RoomType
+  courses: UnitCourse[]
   servicing: boolean
-  in_timetable: boolean
-  entry: FormEntry | null
-  problems: { code: string; message: string }[]
-  smarttt: SmartttState
+  changed_since_published: boolean
+  groups: UnitGroup[]
 }
 
 export interface FormLecturer {
@@ -70,51 +102,91 @@ export interface FormLecturer {
 
 export interface BoardLecturer extends FormLecturer {
   display: string
-  classes: number
+  groups: number
+  /** Across every department this person teaches for. */
   weekly_hours: number
-  lecture_hours: number
-  practical_hours: number
+}
+
+export interface Problem {
+  code: string
+  message: string
+  unit_id: string | null
+}
+
+export interface Publication {
+  published_by: string
+  published_at: string
+  unit_count: number
+  group_count: number
+  reopened_at: string | null
+  reopened_by: string | null
 }
 
 export interface FormBoard {
   term: GeneratorTerm
-  published_version: number | null
   department: { code: string; name: string }
   role: DepartmentRoleName | null
   can_edit: boolean
-  can_submit: boolean
-  rows: FormRow[]
-  summary: { classes: number; allocated: number; not_in_timetable: number; problems: number; not_in_smarttt: number }
+  can_publish: boolean
+  publication: Publication | null
+  published: boolean
+  courses: OwnCourse[]
+  other_courses: Course[]
+  units: Unit[]
   lecturers: BoardLecturer[]
-  submission: { submitted_by: string; submitted_at: string; entry_count: number; allocated_count: number } | null
+  problems: Problem[]
+  times: { published_version: number | null; error: string | null }
+  summary: { courses: number; units: number; groups: number; with_lecturer: number; changed: number; problems: number }
 }
 
 export interface FormProgressRow {
   code: string
   name: string
   role: DepartmentRoleName | null
-  classes: number
-  allocated: number
-  submitted_at: string | null
-  submitted_by: string | null
+  units: number
+  groups: number
+  with_lecturer: number
+  published: boolean
+  publication: Publication | null
 }
 
 export interface BulkResult {
   created: number
   updated: number
   lecturers_added?: number
+  /** Said instead of "added / updated" when that doesn't fit (the groups tab). */
+  message?: string
   errors: { line: number; message: string }[]
   error_count: number
 }
 
-export interface EntryInput {
-  unit_code: string
-  group_label: string
-  unit_title?: string
-  lecturer_id: string | null
-  lecture_hours: number | null
-  practical_hours: number | null
-  cf_hours: number | null
+export interface CourseInput {
+  programme: string
+  year: number
+  semester: number
+  sub_class: string
+  students: number
+}
+
+export interface UnitInput {
+  code: string
+  title: string
+  weekly_hours: number
+  class_length: number
+  room_type: RoomType
+  course_ids: string[]
+}
+
+export interface GroupInput {
+  label: string
+  members: { course_id: string; students?: number | null }[]
+}
+
+export interface GroupPatch {
+  lecturer_id?: string | null
+  lecture_hours?: number | null
+  practical_hours?: number | null
+  cf_hours?: number | null
 }
 
 export type LecturerInput = Omit<FormLecturer, 'id' | 'department_code'>
@@ -124,8 +196,8 @@ const dept = (code: string) => encodeURIComponent(code)
 
 export const formKeys = {
   terms: ['generator-terms'] as const,
-  progress: (term: string | undefined) => ['form-progress', term] as const,
-  board: (code: string, term: string | undefined) => ['form', code, term] as const,
+  progress: (term: string | undefined) => ['teaching-progress', term] as const,
+  board: (code: string, term: string | undefined) => ['teaching', code, term] as const,
 }
 
 export const useGeneratorTerms = () =>
@@ -134,62 +206,94 @@ export const useGeneratorTerms = () =>
 export const useFormProgress = (term: string | undefined) =>
   useQuery({
     queryKey: formKeys.progress(term),
-    queryFn: () => get<{ term: GeneratorTerm; departments: FormProgressRow[] }>('/form/progress', params(term)),
+    queryFn: () => get<{ term: GeneratorTerm; departments: FormProgressRow[] }>('/teaching/progress', params(term)),
   })
 
 export const useFormBoard = (code: string, term: string | undefined) =>
-  useQuery({ queryKey: formKeys.board(code, term), queryFn: () => get<FormBoard>(`/form/${dept(code)}`, params(term)) })
+  useQuery({ queryKey: formKeys.board(code, term), queryFn: () => get<FormBoard>(`/teaching/${dept(code)}`, params(term)) })
 
-function useFormMutation<TVars, TResult>(code: string, fn: (vars: TVars) => Promise<TResult>) {
+function useFormMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: fn,
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['form', code] })
-      void qc.invalidateQueries({ queryKey: ['form-progress'] })
+      // Every department's board: a course or a lecturer's hours can show on another's.
+      void qc.invalidateQueries({ queryKey: ['teaching'] })
+      void qc.invalidateQueries({ queryKey: ['teaching-progress'] })
     },
   })
 }
 
-export const useSaveEntry = (code: string, term: string | undefined) =>
-  useFormMutation(code, (body: EntryInput) =>
-    api.put<FormRow>(`/form/${dept(code)}/entries`, body, { params: params(term) }).then((r) => r.data))
+const at = (code: string, path: string) => `/teaching/${dept(code)}${path}`
 
-export const useDeleteEntry = (code: string, term: string | undefined) =>
-  useFormMutation(code, (id: string) =>
-    api.delete(`/form/${dept(code)}/entries/${id}`, { params: params(term) }).then(() => null))
+export const useSaveCourse = (code: string, term: string | undefined) =>
+  useFormMutation(({ id, body }: { id?: string; body: Partial<CourseInput> }) =>
+    (id
+      ? api.patch<Course>(at(code, `/courses/${id}`), body, { params: params(term) })
+      : api.post<Course>(at(code, '/courses'), body, { params: params(term) })
+    ).then((r) => r.data))
 
-export const useBulkEntries = (code: string, term: string | undefined) =>
-  useFormMutation(code, (rows: Record<string, string>[]) =>
-    api.post<BulkResult>(`/form/${dept(code)}/entries/bulk`, { rows }, { params: params(term) }).then((r) => r.data))
+export const useDeleteCourse = (code: string, term: string | undefined) =>
+  useFormMutation((id: string) => api.delete(at(code, `/courses/${id}`), { params: params(term) }).then(() => null))
 
-export const useSubmitForm = (code: string, term: string | undefined) =>
-  useFormMutation(code, (action: 'submit' | 'reopen') =>
-    api.post<FormBoard>(`/form/${dept(code)}/${action}`, null, { params: params(term) }).then((r) => r.data))
+export const useSaveUnit = (code: string, term: string | undefined) =>
+  useFormMutation(({ id, body }: { id?: string; body: Partial<UnitInput> }) =>
+    (id
+      ? api.patch<{ id: string }>(at(code, `/units/${id}`), body, { params: params(term) })
+      : api.post<{ id: string }>(at(code, '/units'), body, { params: params(term) })
+    ).then((r) => r.data))
 
-/** The COD retries publishing the submitted form's classes SMARTTT didn't take (it was down, or said no). */
-export const usePublishAgain = (code: string, term: string | undefined) =>
-  useFormMutation(code, () =>
-    api.post<FormBoard>(`/form/${dept(code)}/publish-again`, null, { params: params(term) }).then((r) => r.data))
+export const useDeleteUnit = (code: string, term: string | undefined) =>
+  useFormMutation((id: string) => api.delete(at(code, `/units/${id}`), { params: params(term) }).then(() => null))
+
+export const useSaveGroups = (code: string, term: string | undefined) =>
+  useFormMutation(({ unitId, groups }: { unitId: string; groups: GroupInput[] }) =>
+    api.put(at(code, `/units/${unitId}/groups`), { groups }, { params: params(term) }).then((r) => r.data))
+
+export const useSaveGroup = (code: string, term: string | undefined) =>
+  useFormMutation(({ id, body }: { id: string; body: GroupPatch }) =>
+    api.patch(at(code, `/groups/${id}`), body, { params: params(term) }).then((r) => r.data))
+
+export const useBulk = (code: string, term: string | undefined, what: 'courses' | 'units' | 'groups') =>
+  useFormMutation((rows: Record<string, string>[]) =>
+    api.post<BulkResult>(at(code, `/${what}/bulk`), { rows }, { params: params(term) }).then((r) => r.data))
+
+export const usePublish = (code: string, term: string | undefined) =>
+  useFormMutation((action: 'publish' | 'reopen') =>
+    api.post<FormBoard>(at(code, `/${action}`), null, { params: params(term) }).then((r) => r.data))
 
 export const useSaveLecturer = (code: string) =>
-  useFormMutation(code, ({ id, body }: { id?: string; body: Partial<LecturerInput> }) =>
+  useFormMutation(({ id, body }: { id?: string; body: Partial<LecturerInput> }) =>
     (id
-      ? api.patch<FormLecturer>(`/form/${dept(code)}/lecturers/${id}`, body)
-      : api.post<FormLecturer>(`/form/${dept(code)}/lecturers`, body)
+      ? api.patch<FormLecturer>(at(code, `/lecturers/${id}`), body)
+      : api.post<FormLecturer>(at(code, '/lecturers'), body)
     ).then((r) => r.data))
 
 export const useDeleteLecturer = (code: string) =>
-  useFormMutation(code, (id: string) => api.delete(`/form/${dept(code)}/lecturers/${id}`).then(() => null))
+  useFormMutation((id: string) => api.delete(at(code, `/lecturers/${id}`)).then(() => null))
 
 export const useBulkLecturers = (code: string) =>
-  useFormMutation(code, (rows: Record<string, string>[]) =>
-    api.post<BulkResult>(`/form/${dept(code)}/lecturers/bulk`, { rows }).then((r) => r.data))
+  useFormMutation((rows: Record<string, string>[]) =>
+    api.post<BulkResult>(at(code, '/lecturers/bulk'), { rows }).then((r) => r.data))
 
 export const formExportUrl = (code: string, format: 'pdf' | 'docx' | 'xlsx', term: string | undefined) =>
-  `${import.meta.env.VITE_API_URL ?? '/api'}/form/${dept(code)}/export.${format}${term ? `?term=${encodeURIComponent(term)}` : ''}`
+  `${import.meta.env.VITE_API_URL ?? '/api'}/teaching/${dept(code)}/export.${format}${term ? `?term=${encodeURIComponent(term)}` : ''}`
 
 export const employmentShort = (t: EmploymentType) => (t === 'part_time' ? 'PT' : 'FT')
+
+export const meetingText = (m: FormMeeting) => `${m.day_of_week} ${m.start_time}–${m.end_time}${m.room ? ` ${m.room}` : ''}`
+
+/** 'A', 'B', … for splitting a unit into n groups. */
+export const groupLetters = (n: number) => Array.from({ length: n }, (_, i) => String.fromCharCode(65 + i))
+
+/**
+ * Each course's share in each group when a unit is split: a course in one
+ * group goes whole; a course in several is divided as evenly as possible.
+ */
+export function evenSplit(students: number, parts: number): number[] {
+  const base = Math.floor(students / parts)
+  return Array.from({ length: parts }, (_, i) => base + (i < students % parts ? 1 : 0))
+}
 
 const TITLE = /^(dr|prof|mr|mrs|ms|miss|eng|rev)\.?\s+/i
 const KIND = /\s*\((ft|pt)\)\s*$/i

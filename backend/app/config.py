@@ -24,12 +24,16 @@ class Settings(BaseSettings):
     # most this long. Every write re-reads before checking.
     smarttt_cache_seconds: int = Field(default=60, ge=0, le=60)
 
-    # The Timetable Generator: where each term's units, groups and published
-    # meetings come from for the allocation form. GENERATOR_API_KEY must equal
-    # ALLOCATOR_API_KEY in the Generator.
+    # The Timetable Generator: its terms, and when and where each class meets
+    # once the Director publishes. GENERATOR_API_KEY must equal ALLOCATOR_API_KEY
+    # in the Generator.
     generator_base_url: str = "http://localhost:8002"
     generator_api_key: str = ""
     generator_timeout_seconds: float = 15.0
+    # The key the Generator presents to read what departments have published
+    # (/api/integrations/generator/...); it must equal ALLOCATOR_CLIENT_KEY in
+    # the Generator. Unset, every such request is refused.
+    generator_inbound_key: str = ""
 
     # Sign-in sessions: an opaque random token in an httpOnly cookie, stored hashed.
     session_cookie_name: str = "ta_session"
@@ -67,6 +71,7 @@ class Settings(BaseSettings):
                 for name, value in (
                     ("SMARTTT_API_KEY", self.smarttt_api_key),
                     ("GENERATOR_API_KEY", self.generator_api_key),
+                    ("GENERATOR_INBOUND_KEY", self.generator_inbound_key),
                 )
                 if not value
             ]

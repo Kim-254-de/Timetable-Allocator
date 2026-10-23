@@ -3,10 +3,10 @@ Client for the Timetable Generator's read-only Allocator endpoints
 (/api/integrations/allocator/), authenticated with this system's own key
 (X-API-Key = GENERATOR_API_KEY here, ALLOCATOR_API_KEY there).
 
-The Generator is where the Directorate enters each term's units and groups,
-so departments can fill in their allocation as soon as those exist, before
-the timetable is published. Once a version is published, each class also
-carries its meetings (day, time, room), which the lecturer clash check uses.
+The Director opens each term in the Generator, and departments enter their
+teaching here against it. Once the Director publishes a version, the
+Generator also says when and where each class meets, which departments see
+on their pages and downloads.
 """
 
 from __future__ import annotations
@@ -67,8 +67,9 @@ class GeneratorClient:
     def terms(self) -> list[dict[str, Any]]:
         return list(self._get("/terms") or [])
 
-    def sections(self, term_id: str) -> dict[str, Any]:
-        return dict(self._get(f"/terms/{term_id}/sections") or {})
+    def times(self, term_id: str) -> dict[str, Any]:
+        """The Director's latest published version: when and where each class (by key) meets."""
+        return dict(self._get(f"/terms/{term_id}/times") or {})
 
 
 _client: GeneratorClient | None = None

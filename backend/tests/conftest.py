@@ -9,6 +9,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("SMARTTT_API_KEY", "test-allocator-key")
 os.environ.setdefault("GENERATOR_API_KEY", "test-generator-key")
+os.environ.setdefault("GENERATOR_INBOUND_KEY", "test-inbound-key")
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session

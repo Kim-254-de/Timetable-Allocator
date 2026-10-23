@@ -1,9 +1,9 @@
-import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { AxiosError } from 'axios'
 import { errorMessage } from '@/lib/api'
 import { useLogout, useMe } from '@/lib/queries'
-import { AllocationFormPage } from '@/pages/AllocationFormPage'
+import { TeachingPage } from '@/pages/TeachingPage'
 import { DepartmentPage } from '@/pages/DepartmentPage'
 import { FormProgressPage } from '@/pages/FormProgressPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -21,7 +21,8 @@ export function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<FormProgressPage />} />
-        <Route path="form/:code" element={<AllocationFormPage />} />
+        <Route path="teaching/:code" element={<TeachingPage />} />
+        <Route path="form/:code" element={<FormRedirect />} />
         {/* The earlier board over SMARTTT's sections, kept for when SMARTTT's allocation endpoints are live. */}
         <Route path="departments/:departmentId" element={<DepartmentPage />} />
         <Route path="progress" element={<ProgressPage />} />
@@ -43,7 +44,7 @@ function Layout() {
           <nav className="flex flex-wrap gap-1 text-sm">
             <NavLink to="/" end
               className={({ isActive }) => clsx('rounded px-2 py-1', isActive ? 'bg-white/15 text-white' : 'text-brand-100 hover:text-white')}>
-              Course allocation
+              Departments
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
@@ -58,4 +59,11 @@ function Layout() {
       </main>
     </div>
   )
+}
+
+/** Old links to a department's allocation form open its page. */
+function FormRedirect() {
+  const { code = '' } = useParams()
+  const { search } = useLocation()
+  return <Navigate to={`/teaching/${encodeURIComponent(code)}${search}`} replace />
 }

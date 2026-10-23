@@ -13,6 +13,16 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
+# The old allocation form's tables, no longer mapped: kept (migration 0005) so
+# nothing entered on them is lost, and left out of autogenerate's comparison.
+RETIRED_TABLES = {"form_entries", "form_submissions"}
+
+
+def include_object(obj: object, name: str | None, type_: str, reflected: bool, compare_to: object) -> bool:
+    table = getattr(obj, "table", None)
+    table_name = name if type_ == "table" else getattr(table, "name", None)
+    return not (reflected and table_name in RETIRED_TABLES)
+
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -20,6 +30,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -30,7 +41,12 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
