@@ -80,11 +80,12 @@ On the department page:
 - **Courses** get a **mode** (Regular, ODEL, Weekend, Evening, School-based,
   Part-time); ODEL students sit their exams in a room of their own.
 - **Invigilators** tab, once the Director shares an exam draft: each paper's
-  date, session and rooms, and one invigilator per paper from any
-  department's list. Nobody (one staff number) is in two places in a session
-  or over their duty limit (set per lecturer); duties per lecturer are shown.
-  The COD publishes the invigilators. (An extra invigilator per extra room of
-  a multi-room paper is to be confirmed, A2.)
+  date, session and rooms. The department names the paper's **main**
+  invigilator (in its main room; administers the paper, collects the scripts
+  from every room and takes them away) and one **extra** invigilator for each
+  extra room, from any department's list. Nobody (one staff number) is in two
+  places in a session or over their duty limit (set per lecturer); duties per
+  lecturer are shown. The COD publishes the invigilators.
 
 For the Generator (`X-API-Key` = `GENERATOR_INBOUND_KEY`):
 `GET /api/integrations/generator/terms/{term}/exams` (published papers with
@@ -111,7 +112,9 @@ Not built in these two repos:
 - **SMARTTT**
   - an exam publication endpoint taking the Generator's exam payload: per paper,
     its codes, date, start and end, examiner, and seating
-    `[{room_code, class_row, part, parts, students, invigilator_staff_number}]`;
+    `[{room_code, class_row, part, parts, students, invigilator_staff_number}]`
+    (the room's invigilator: the main one in `main_room`, else that room's extra
+    one) and `main_invigilator_staff_number`;
     until it exists, exam versions are approved in the Generator and marked
     "not yet in SMARTTT";
   - an exam view per student (each paper's date, time and *their* room) and per
@@ -121,6 +124,30 @@ Not built in these two repos:
 - **Smart Attendance**: an *exam* session type, one per paper per room, opened
   by its invigilator; students check in only to their own paper and room; a
   sat/absent report per paper for the invigilator.
+- **Switching SMARTTT to exams** (scheduled by the Director in the Generator):
+  - a term **mode**, `teaching` | `exams`, with `exam_switch_at`, `switched_at`,
+    `switched_by`, `exam_close_at`, `exam_closed_at` and `closed_by`; a
+    scheduled job flips the mode when `exam_switch_at` (or `exam_close_at`)
+    passes;
+  - Generator endpoints (Generator API key): `GET /api/v1/integrations/generator/exam-mode/?term=`
+    returns that state; `POST .../exam-mode/` with `{term_id, action, at, by}`,
+    `action` one of `schedule_switch` (also moves it), `cancel_switch`,
+    `switch_now`, `schedule_close`, `cancel_close`, `close_now`, returns the new
+    state (refuse `cancel_switch` once switched, code `already_switched`);
+  - in exam mode the teaching timetable is **hidden completely**: teaching slots
+    are not returned to the app (hidden, not deleted) until the next term's
+    teaching timetable is published;
+  - students' home screen shows only their papers (date, time, codes, title and
+    *their* room); lecturers see their papers (as examiner) and invigilation
+    duties (main, or extra in a room);
+  - exam reminders (the evening before, and 1 hour before each paper or duty)
+    replace class reminders;
+  - changes after the switch (a paper moved, a room changed) notify the
+    affected students and invigilators at once;
+  - the exam period closes when the Director closes it, or on its own when the
+    next term's teaching timetable is published; SMARTTT then shows that teaching.
+- **Smart Attendance** refuses opening teaching classes while the term is in
+  exam mode.
 
 ## The earlier SMARTTT board
 

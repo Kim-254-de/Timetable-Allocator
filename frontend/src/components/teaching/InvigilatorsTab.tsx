@@ -7,15 +7,17 @@ import {
   useSetInvigilator,
   type InvigilationBoard,
   type InvigilationRow,
+  type NamedInvigilator,
 } from '@/lib/form'
 
 const when = (p: InvigilationRow) =>
   p.date ? `${new Date(`${p.date}T00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} ${p.start_time}–${p.end_time}` : 'Not placed'
 
 /**
- * Invigilators on the exam draft the Director shared: one per paper, who
- * administers it and takes the scripts away. Anyone on any department's list
- * can be named; one person is never in two places in a session.
+ * Invigilators on the exam draft the Director shared: a main invigilator per
+ * paper, who administers it and takes the scripts from every room away, and
+ * an extra one for each extra room. Anyone on any department's list can be
+ * named; one person is never in two places in a session.
  */
 export function InvigilatorsTab({ code, term }: { code: string; term: string | undefined }) {
   const board = useInvigilationBoard(code, term)
@@ -27,13 +29,13 @@ export function InvigilatorsTab({ code, term }: { code: string; term: string | u
   if (!data.draft) {
     return <p className="text-sm text-muted">The Director hasn't shared an exam draft yet. Your papers' dates, sessions and rooms will show here, to name invigilators.</p>
   }
-  const named = data.papers.filter((p) => p.invigilator_id).length
+  const named = data.papers.filter((p) => p.main && p.extras.every((e) => e.invigilator)).length
 
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">
-          {data.draft.name} · {named} of {data.papers.length} papers have an invigilator
+          {data.draft.name} · {named} of {data.papers.length} papers have all their invigilators
           {data.published && data.publication && ` · published on ${new Date(data.publication.published_at).toLocaleDateString()}`}
         </p>
         {data.can_publish && (
@@ -65,34 +67,44 @@ export function InvigilatorsTab({ code, term }: { code: string; term: string | u
 
 function Row({ code, term, board, paper }: { code: string; term: string | undefined; board: InvigilationBoard; paper: InvigilationRow }) {
   const save = useSetInvigilator(code, term)
-  const [others, setOthers] = useState(Boolean(paper.invigilator_department && paper.invigilator_department !== board.department.code))
-  const choices = board.lecturers.filter((x) => others || x.own || x.id === paper.invigilator_id)
+  const named = [paper.main, ...paper.extras.map((e) => e.invigilator)]
+  const [others, setOthers] = useState(named.some((x) => x && x.department_code !== board.department.code))
+  const missing = !paper.main || paper.extras.some((e) => !e.invigilator)
+
+  const picker = (room: string, current: NamedInvigilator | null, label: string) => (
+    <label key={room || 'main'} className="block">
+      <span className="text-xs text-muted">{label}</span>
+      {board.can_edit ? (
+        <select aria-label={`${label} for ${paper.codes}`} value={current?.id ?? ''} disabled={save.isPending || !paper.date}
+          onChange={(e) => save.mutate({ paperId: paper.paper_id, lecturerId: e.target.value || null, room })}
+          className="w-full rounded-md border border-line px-2 py-1">
+          <option value="">Not named</option>
+          {board.lecturers.filter((x) => others || x.own || x.id === current?.id).map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.display}{x.own ? '' : ` · ${x.department_code}`} ({x.duties}{x.max_exam_duties ? ` of ${x.max_exam_duties}` : ''} duties)
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="block">{current?.display ?? <span className="text-warning">Not named</span>}</span>
+      )}
+    </label>
+  )
+
   return (
-    <tr className={clsx('border-t border-line align-top', !paper.invigilator_id && 'bg-warning-soft')}>
+    <tr className={clsx('border-t border-line align-top', missing && 'bg-warning-soft')}>
       <td className="px-3 py-2"><span className="font-medium">{paper.codes}</span><span className="block text-xs text-muted">{paper.title}</span></td>
       <td className="px-3 py-2 whitespace-nowrap">{when(paper)}</td>
       <td className="px-3 py-2 text-xs">{paper.rooms.join(', ')}</td>
-      <td className="px-3 py-2">
-        {board.can_edit ? (
-          <div className="space-y-1">
-            <select aria-label={`Invigilator for ${paper.codes}`} value={paper.invigilator_id ?? ''} disabled={save.isPending || !paper.date}
-              onChange={(e) => save.mutate({ paperId: paper.paper_id, lecturerId: e.target.value || null })}
-              className="w-full rounded-md border border-line px-2 py-1">
-              <option value="">Not named</option>
-              {choices.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.display}{x.own ? '' : ` · ${x.department_code}`} ({x.duties}{x.max_exam_duties ? ` of ${x.max_exam_duties}` : ''} duties)
-                </option>
-              ))}
-            </select>
-            <label className="flex items-center gap-1 text-xs text-muted">
-              <input type="checkbox" checked={others} onChange={(e) => setOthers(e.target.checked)} /> Show other departments' lecturers
-            </label>
-            {save.isError && <p role="alert" className="text-xs text-danger">{errorMessage(save.error)}</p>}
-          </div>
-        ) : (
-          paper.invigilator ?? <span className="text-warning">Not named</span>
+      <td className="space-y-2 px-3 py-2">
+        {picker('', paper.main, `Main invigilator${paper.main_room ? ` (${paper.main_room}; collects every room's scripts)` : ''}`)}
+        {paper.extras.map((e) => picker(e.room, e.invigilator, `Extra invigilator in ${e.room}`))}
+        {board.can_edit && (
+          <label className="flex items-center gap-1 text-xs text-muted">
+            <input type="checkbox" checked={others} onChange={(e) => setOthers(e.target.checked)} /> Show other departments' lecturers
+          </label>
         )}
+        {save.isError && <p role="alert" className="text-xs text-danger">{errorMessage(save.error)}</p>}
       </td>
     </tr>
   )

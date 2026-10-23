@@ -445,9 +445,17 @@ export interface InvigilationRow {
   start_time: string | null
   end_time: string | null
   rooms: string[]
-  invigilator_id: string | null
-  invigilator: string | null
-  invigilator_department: string | null
+  /** The main invigilator sits in the main room and collects the scripts from every room. */
+  main_room: string | null
+  main: NamedInvigilator | null
+  /** Each room but the main one needs an invigilator of its own. */
+  extras: { room: string; invigilator: NamedInvigilator | null }[]
+}
+
+export interface NamedInvigilator {
+  id: string
+  display: string
+  department_code: string
 }
 
 export interface InvigilatorChoice {
@@ -481,8 +489,8 @@ export const useInvigilationBoard = (code: string, term: string | undefined) =>
   })
 
 export const useSetInvigilator = (code: string, term: string | undefined) =>
-  useFormMutation(({ paperId, lecturerId }: { paperId: string; lecturerId: string | null }) =>
-    api.put(at(code, `/invigilators/${paperId}`), { lecturer_id: lecturerId }, { params: params(term) }).then((r) => r.data))
+  useFormMutation(({ paperId, lecturerId, room }: { paperId: string; lecturerId: string | null; room: string }) =>
+    api.put(at(code, `/invigilators/${paperId}`), { lecturer_id: lecturerId, room }, { params: params(term) }).then((r) => r.data))
 
 export const usePublishInvigilators = (code: string, term: string | undefined) =>
   useFormMutation((action: 'publish' | 'reopen') =>

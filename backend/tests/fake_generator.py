@@ -45,6 +45,9 @@ class FakeGenerator:
                     "start_time": starts[session][0],
                     "end_time": starts[session][1],
                     "rooms": rooms,
+                    # The first room is the main one; each other room needs an extra invigilator.
+                    "main_room": rooms[0] if rooms else None,
+                    "extra_rooms": rooms[1:],
                 }
                 for ref, (day, session, rooms) in papers.items()
             ],

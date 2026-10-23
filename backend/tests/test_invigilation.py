@@ -17,8 +17,8 @@ def _papers(client):
     return papers, jane, sam
 
 
-def _set(client, paper, lecturer):
-    return client.put(f"{CS}/invigilators/{paper}", json={"lecturer_id": lecturer})
+def _set(client, paper, lecturer, room=""):
+    return client.put(f"{CS}/invigilators/{paper}", json={"lecturer_id": lecturer, "room": room})
 
 
 def test_nothing_to_name_until_the_director_shares_a_draft(client, generator):
@@ -46,7 +46,7 @@ def test_one_person_is_never_in_two_places_in_a_session(client, generator):
     # Someone from another department can be named (Education's Sam).
     _ok(_set(client, papers[1], sam))
     board = _ok(client.get(f"{CS}/invigilators"))
-    assert board["papers"][1]["invigilator_department"] == "ED"
+    assert board["papers"][1]["main"]["department_code"] == "ED"
     duties = {lec["display"]: lec["duties"] for lec in board["lecturers"]}
     assert duties["Dr. Jane Otieno (FT)"] == 1 and duties["Dr. Sam Mwangi (FT)"] == 1
 
@@ -78,3 +78,42 @@ def test_the_generator_sees_invigilators_once_the_cod_publishes(client, generato
     assert set(data) == set(papers)
     _ok(client.post(f"{CS}/invigilators/reopen"))
     assert _ok(client.get(url, headers=KEY)) == {}
+
+
+def test_a_paper_in_several_rooms_needs_an_extra_invigilator_per_extra_room(client, generator):
+    papers, jane, sam = _papers(client)
+    sign_in(client, "STF/0100")
+    tom = _lecturer(client, CS, "Tom Kariuki", "STF/10")
+    generator.share_exams(
+        {
+            papers[0]: ("2026-11-23", 0, ["UTC 1", "STB 1", "STB 2"]),
+            papers[1]: ("2026-11-23", 1, ["ADM 1"]),
+            papers[2]: ("2026-11-24", 0, ["ADM 1"]),
+        }
+    )
+    board = _ok(client.get(f"{CS}/invigilators"))
+    big = board["papers"][0]
+    assert big["main_room"] == "UTC 1" and [e["room"] for e in big["extras"]] == ["STB 1", "STB 2"]
+    assert len(board["problems"]) == 5  # three main invigilators, two extra rooms
+    _ok(_set(client, papers[0], jane))
+    # The main invigilator can't also be the extra one in another room of the same paper.
+    busy = _set(client, papers[0], jane, "STB 1")
+    assert busy.status_code == 409 and busy.json()["error"]["code"] == "INVIGILATOR_BUSY"
+    assert _set(client, papers[0], tom, "UTC 1").status_code == 422  # the main room isn't an extra room
+    _ok(_set(client, papers[0], tom, "STB 1"))
+    for paper in papers[1:]:
+        _ok(_set(client, paper, jane))
+    refused = client.post(f"{CS}/invigilators/publish")
+    assert refused.status_code == 409
+    assert [p["message"] for p in refused.json()["error"]["details"]["problems"]] == [
+        "Name an invigilator for COSC 101 title in STB 2."
+    ]
+    _ok(_set(client, papers[0], sam, "STB 2"))
+    _ok(client.post(f"{CS}/invigilators/publish"))
+    data = _ok(client.get("/api/integrations/generator/terms/term-1/invigilators", headers=KEY))
+    assert (
+        set(data[papers[0]]) == {"", "STB 1", "STB 2"}
+        and data[papers[0]]["STB 2"]["staff_number"] == "STF/50"
+    )
+    duties = {lec["display"]: lec["duties"] for lec in _ok(client.get(f"{CS}/invigilators"))["lecturers"]}
+    assert duties["Dr. Jane Otieno (FT)"] == 3 and duties["Dr. Tom Kariuki (FT)"] == 1

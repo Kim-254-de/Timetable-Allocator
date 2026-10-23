@@ -1,15 +1,17 @@
 """
 Invigilators, named by departments on the exam draft the Director shared.
 
-Each of a department's papers gets one invigilator, who administers it,
-collects the scripts and takes them away. Anyone on any department's list can
-be named; one person (one staff number) is never in two places in one
-session, and never over their duty limit when one is set. The COD publishes
-the invigilators; the Director can publish the exam timetable only when every
-paper has one.
+Every paper has one MAIN invigilator, who administers it, collects the
+scripts from every room and takes them away; a paper spread over several
+rooms also gets one EXTRA invigilator for each extra room (every room but its
+main one). Anyone on any department's list can be named; one person (one
+staff number) is never in two places in one session, and never over their
+duty limit when one is set. The COD publishes the invigilators; the Director
+can publish the exam timetable only when every paper and every extra room has
+one.
 
-An invigilation's `room` is "" for the whole paper. (Naming one per extra
-room of a multi-room paper is still to be confirmed.)
+An invigilation's `room` is "" for the main invigilator, else the extra
+room's code.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from app.services.lecturers import display_name, get_lecturer, person
 from app.services.teaching import publication_dict, term_units
 
 KIND = "invigilators"
-WHOLE_PAPER = ""
+MAIN = ""
 
 
 def _shared(generator: GeneratorClient, ctx: Context) -> dict[str, Any]:
@@ -71,11 +73,40 @@ def problems(
     shared: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
-    named = {i.paper_id for i in invigilations if i.room == WHOLE_PAPER}
+    named = {(i.paper_id, i.room) for i in invigilations}
     for p in papers:
-        if p.department_code == ctx.code and str(p.id) in shared and p.id not in named:
-            found.append({"code": "no_invigilator", "message": f"Name an invigilator for {p.title}."})
+        where = shared.get(str(p.id))
+        if p.department_code != ctx.code or where is None:
+            continue
+        if (p.id, MAIN) not in named:
+            found.append({"code": "no_invigilator", "message": f"Name the main invigilator for {p.title}."})
+        for room in _extra_rooms(where):
+            if (p.id, room) not in named:
+                found.append(
+                    {
+                        "code": "no_extra_invigilator",
+                        "message": f"Name an invigilator for {p.title} in {room}.",
+                    }
+                )
     return found
+
+
+def _extra_rooms(where: dict[str, Any]) -> list[str]:
+    """Every room of the paper but its main one."""
+    if "extra_rooms" in where:
+        return list(where["extra_rooms"])
+    rooms = list(where.get("rooms") or [])
+    return rooms[1:]
+
+
+def _who(inv: Invigilation | None) -> dict[str, Any] | None:
+    if inv is None:
+        return None
+    return {
+        "id": str(inv.lecturer_id),
+        "display": display_name(inv.lecturer),
+        "department_code": inv.lecturer.department_code,
+    }
 
 
 def board(
@@ -91,7 +122,7 @@ def board(
     units = {u.id: u for u in term_units(db, ctx.term_id)}
     papers = term_papers(db, ctx.term_id)
     invigilations = _term_invigilations(db, ctx.term_id)
-    by_paper = {i.paper_id: i for i in invigilations if i.room == WHOLE_PAPER}
+    by_slot = {(i.paper_id, i.room): i for i in invigilations}
     duties: dict[str, int] = defaultdict(int)
     for i in invigilations:
         duties[person(i.lecturer)] += 1
@@ -101,7 +132,7 @@ def board(
     rows = []
     for p in sorted(own, key=lambda p: "/".join(paper_codes(p, units))):
         where = shared["papers"].get(str(p.id))
-        inv = by_paper.get(p.id)
+        extra = _extra_rooms(where) if where else []
         rows.append(
             {
                 "paper_id": str(p.id),
@@ -112,9 +143,11 @@ def board(
                 "start_time": where["start_time"] if where else None,
                 "end_time": where["end_time"] if where else None,
                 "rooms": where["rooms"] if where else [],
-                "invigilator_id": str(inv.lecturer_id) if inv else None,
-                "invigilator": display_name(inv.lecturer) if inv else None,
-                "invigilator_department": inv.lecturer.department_code if inv else None,
+                "main_room": (where.get("main_room") or (where["rooms"][0] if where["rooms"] else None))
+                if where
+                else None,
+                "main": _who(by_slot.get((p.id, MAIN))),
+                "extras": [{"room": room, "invigilator": _who(by_slot.get((p.id, room)))} for room in extra],
             }
         )
     lecturers = list(
@@ -154,8 +187,9 @@ def set_invigilator(
     ctx: Context,
     paper_id: str,
     lecturer_id: str | None,
+    room: str = MAIN,
 ) -> dict[str, Any]:
-    """Names (or clears) a paper's invigilator: never someone busy then, or at their duty limit."""
+    """Names or clears a paper's main (room "") or extra-room invigilator, checked for clashes and limits."""
     require_enter(ctx)
     require_open(db, ctx, KIND)
     try:
@@ -168,15 +202,17 @@ def set_invigilator(
     where = shared.get(str(paper.id))
     if where is None:
         raise ApiError(409, "NOT_IN_DRAFT", "The Director's shared exam draft doesn't have this paper yet.")
+    if room != MAIN and room not in _extra_rooms(where):
+        raise ApiError(422, "VALIDATION_ERROR", f"{room} isn't one of this paper's extra rooms.")
     existing = db.scalar(
-        select(Invigilation).where(Invigilation.paper_id == paper.id, Invigilation.room == WHOLE_PAPER)
+        select(Invigilation).where(Invigilation.paper_id == paper.id, Invigilation.room == room)
     )
     if lecturer_id is None:
         if existing is not None:
             audit(db, identity, "invigilation.clear", "exam_paper", str(paper.id), None, None)
             db.delete(existing)
             db.commit()
-        return {"paper_id": str(paper.id), "invigilator_id": None}
+        return {"paper_id": str(paper.id), "room": room, "invigilator_id": None}
     lecturer = get_lecturer(db, lecturer_id)
     if not lecturer.active or not lecturer.staff_number:
         raise ApiError(
@@ -185,10 +221,11 @@ def set_invigilator(
     who = person(lecturer)
     duties = 0
     for other in _term_invigilations(db, ctx.term_id):
-        if other.paper_id == paper.id or person(other.lecturer) != who:
+        if (other.paper_id == paper.id and other.room == room) or person(other.lecturer) != who:
             continue
         duties += 1
         there = shared.get(str(other.paper_id))
+        # Another paper, or another room of this one, in the same session: they can't be in both.
         if there is not None and there["date"] == where["date"] and there["session"] == where["session"]:
             other_paper = db.get(ExamPaper, other.paper_id)
             raise ApiError(
@@ -206,7 +243,7 @@ def set_invigilator(
         )
     if existing is None:
         existing = Invigilation(
-            paper_id=paper.id, room=WHOLE_PAPER, lecturer_id=lecturer.id, entered_by_name=identity.actor
+            paper_id=paper.id, room=room, lecturer_id=lecturer.id, entered_by_name=identity.actor
         )
         db.add(existing)
     else:
@@ -221,10 +258,10 @@ def set_invigilator(
         "exam_paper",
         str(paper.id),
         None,
-        {"lecturer": lecturer.staff_number},
+        {"lecturer": lecturer.staff_number, "room": room or "main"},
     )
     db.commit()
-    return {"paper_id": str(paper.id), "invigilator_id": str(lecturer.id)}
+    return {"paper_id": str(paper.id), "room": room, "invigilator_id": str(lecturer.id)}
 
 
 def _same_person(db: Session, lecturer: Lecturer) -> list[Lecturer]:

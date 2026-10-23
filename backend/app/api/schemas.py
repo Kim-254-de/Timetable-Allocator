@@ -196,6 +196,10 @@ class PracticalBody(_Strict):
 
 
 class InvigilatorBody(_Strict):
-    """Who invigilates the paper (any department's lecturer, by id); null clears it."""
+    """
+    Who invigilates the paper: its main invigilator (room "") or the one in an
+    extra room (its code); any department's lecturer, by id; null clears it.
+    """
 
+    room: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] = ""
     lecturer_id: Id | None

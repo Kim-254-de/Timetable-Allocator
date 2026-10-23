@@ -685,7 +685,9 @@ def set_invigilator(
     term: TermParam = None,
 ) -> dict[str, Any]:
     ctx = _ctx(identity, generator, smarttt, department, term)
-    return ok(invigilation.set_invigilator(db, generator, identity, ctx, paper_id, body.lecturer_id))
+    return ok(
+        invigilation.set_invigilator(db, generator, identity, ctx, paper_id, body.lecturer_id, body.room)
+    )
 
 
 @router.post("/teaching/{department}/invigilators/publish")
