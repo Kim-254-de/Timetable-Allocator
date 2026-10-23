@@ -71,6 +71,10 @@ class GeneratorClient:
         """The Director's latest published version: when and where each class (by key) meets."""
         return dict(self._get(f"/terms/{term_id}/times") or {})
 
+    def exam_draft(self, term_id: str) -> dict[str, Any]:
+        """The exam draft the Director shared: each paper's date, session and rooms (papers by our ids)."""
+        return dict(self._get(f"/terms/{term_id}/exam-draft") or {})
+
 
 _client: GeneratorClient | None = None
 _client_lock = threading.Lock()

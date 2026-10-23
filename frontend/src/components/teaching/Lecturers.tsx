@@ -161,6 +161,7 @@ export function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
     phone: lecturer?.phone ?? '',
     email: lecturer?.email ?? '',
     max_weekly_hours: lecturer?.max_weekly_hours ?? null,
+    max_exam_duties: lecturer?.max_exam_duties ?? null,
     active: lecturer?.active ?? true,
   })
   const submit = (e: FormEvent) => {
@@ -170,6 +171,7 @@ export function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
       staff_number: form.staff_number?.trim() || null,
       // Editing: an empty limit is sent as 0, which clears it.
       max_weekly_hours: form.max_weekly_hours ?? (lecturer ? 0 : null),
+      max_exam_duties: form.max_exam_duties ?? (lecturer ? 0 : null),
     }
     save.mutate({ id: lecturer?.id, body }, { onSuccess: onSaved })
   }
@@ -198,6 +200,10 @@ export function LecturerForm({ code, lecturer, typed, onClose, onSaved }: {
           <Field label="Max teaching hours a week" hint="Counted across every department. Leave blank for no limit.">
             <input type="number" min={1} max={60} value={form.max_weekly_hours ?? ''}
               onChange={(e) => setForm({ ...form, max_weekly_hours: e.target.value === '' ? null : Number(e.target.value) })} className={inputClass} />
+          </Field>
+          <Field label="Max invigilation duties" hint="In an exam period, across every department. Blank: no limit.">
+            <input type="number" min={1} max={100} value={form.max_exam_duties ?? ''}
+              onChange={(e) => setForm({ ...form, max_exam_duties: e.target.value === '' ? null : Number(e.target.value) })} className={inputClass} />
           </Field>
           <label className="mt-6 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Active

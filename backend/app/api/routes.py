@@ -20,6 +20,7 @@ from app.api.schemas import (
     CoursePatch,
     GroupPatch,
     GroupsBody,
+    InvigilatorBody,
     LecturerBody,
     LecturerPatch,
     LoginBody,
@@ -43,6 +44,7 @@ from app.services import (
     exams,
     export,
     form_export,
+    invigilation,
     lecturers,
     spreadsheet,
     teaching,
@@ -661,6 +663,45 @@ def moderation_letter(
     )
 
 
+# -- invigilators, on the Director's shared exam draft -------------------------------------------
+
+
+@router.get("/teaching/{department}/invigilators")
+def invigilator_board(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(invigilation.board(db, generator, smarttt, identity, department, term))
+
+
+@router.put("/teaching/{department}/invigilators/{paper_id}")
+def set_invigilator(
+    department: DeptCode,
+    paper_id: ItemId,
+    body: InvigilatorBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok(invigilation.set_invigilator(db, generator, identity, ctx, paper_id, body.lecturer_id))
+
+
+@router.post("/teaching/{department}/invigilators/publish")
+def publish_invigilators(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(invigilation.publish(db, generator, smarttt, identity, department, term))
+
+
+@router.post("/teaching/{department}/invigilators/reopen")
+def reopen_invigilators(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(invigilation.reopen(db, generator, smarttt, identity, department, term))
+
+
 # -- each department's own lecturers ---------------------------------------------------------
 
 
@@ -703,8 +744,9 @@ def change_lecturer(
     lecturer = lecturers.get_lecturer(db, lecturer_id)
     lecturers.lecturer_ctx_check(lecturer, ctx)
     fields = body.model_dump(exclude_unset=True)
-    if fields.get("max_weekly_hours") == 0:
-        fields["max_weekly_hours"] = None
+    for limit in ("max_weekly_hours", "max_exam_duties"):
+        if fields.get(limit) == 0:  # 0 clears a limit
+            fields[limit] = None
     return ok(lecturers.lecturer_dict(lecturers.update_lecturer(db, identity, ctx, lecturer, fields)))
 
 
@@ -753,3 +795,12 @@ def generator_submissions(
 def generator_exams(term_id: Annotated[str, Path(max_length=64)], db: Db, smarttt: Smarttt) -> dict[str, Any]:
     """Each department's published exam papers (with the class rows sitting them) and practicals."""
     return ok(exams.submissions(db, smarttt, term_id))
+
+
+@router.get(
+    "/integrations/generator/terms/{term_id}/invigilators",
+    dependencies=[Depends(require_generator_key)],
+)
+def generator_invigilators(term_id: Annotated[str, Path(max_length=64)], db: Db) -> dict[str, Any]:
+    """Each paper's invigilator, from departments that published theirs."""
+    return ok(invigilation.for_generator(db, term_id))

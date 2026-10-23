@@ -22,6 +22,8 @@ def upgrade() -> None:
         batch.add_column(sa.Column("mode", sa.String(length=20), nullable=False, server_default="regular"))
     with op.batch_alter_table("department_publications") as batch:
         batch.add_column(sa.Column("kind", sa.String(length=20), nullable=False, server_default="teaching"))
+    with op.batch_alter_table("lecturers") as batch:
+        batch.add_column(sa.Column("max_exam_duties", sa.Integer(), nullable=True))
     op.create_table(
         "exam_papers",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -100,6 +102,8 @@ def downgrade() -> None:
     op.drop_index("ix_exam_papers_examiner_id", table_name="exam_papers")
     op.drop_index("ix_exam_paper_department", table_name="exam_papers")
     op.drop_table("exam_papers")
+    with op.batch_alter_table("lecturers") as batch:
+        batch.drop_column("max_exam_duties")
     with op.batch_alter_table("department_publications") as batch:
         batch.drop_column("kind")
     with op.batch_alter_table("courses") as batch:

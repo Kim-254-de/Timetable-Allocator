@@ -36,6 +36,7 @@ def lecturer_dict(lecturer: Lecturer, show_contacts: bool = True) -> dict[str, A
         "phone": lecturer.phone if show_contacts else "",
         "email": lecturer.email if show_contacts else "",
         "max_weekly_hours": lecturer.max_weekly_hours,
+        "max_exam_duties": lecturer.max_exam_duties,
         "active": lecturer.active,
     }
 
@@ -72,7 +73,16 @@ def _apply_lecturer(db: Session, lecturer: Lecturer, fields: dict[str, Any]) -> 
         if clash is not None:
             raise ApiError(409, "STAFF_NUMBER_TAKEN", f"{staff} is already on the list as {clash.full_name}.")
         fields = {**fields, "staff_number": staff}
-    for key in ("title", "full_name", "staff_number", "phone", "email", "max_weekly_hours", "active"):
+    for key in (
+        "title",
+        "full_name",
+        "staff_number",
+        "phone",
+        "email",
+        "max_weekly_hours",
+        "max_exam_duties",
+        "active",
+    ):
         if key in fields:
             setattr(lecturer, key, fields[key] if fields[key] != "" or key != "staff_number" else None)
     if fields.get("employment_type") is not None:

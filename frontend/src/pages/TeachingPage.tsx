@@ -3,12 +3,13 @@ import clsx from 'clsx'
 import { Download } from 'lucide-react'
 import { CoursesTab } from '@/components/teaching/CoursesTab'
 import { ExamsTab } from '@/components/teaching/ExamsTab'
+import { InvigilatorsTab } from '@/components/teaching/InvigilatorsTab'
 import { LecturersTab } from '@/components/teaching/Lecturers'
 import { UnitsTab } from '@/components/teaching/UnitsTab'
 import { errorMessage } from '@/lib/api'
 import { formExportUrl, meetingText, useFormBoard, useGeneratorTerms, usePublish, type FormBoard } from '@/lib/form'
 
-const TABS = ['courses', 'units', 'lecturers', 'times', 'exams'] as const
+const TABS = ['courses', 'units', 'lecturers', 'times', 'exams', 'invigilators'] as const
 type Tab = (typeof TABS)[number]
 
 /**
@@ -41,8 +42,9 @@ export function TeachingPage() {
     lecturers: data.lecturers.length,
     times: data.summary.groups,
     exams: data.units.length,
+    invigilators: 0,
   }
-  const labels: Record<Tab, string> = { courses: 'Courses', units: 'Units & groups', lecturers: 'Lecturers', times: 'Times', exams: 'Exams' }
+  const labels: Record<Tab, string> = { courses: 'Courses', units: 'Units & groups', lecturers: 'Lecturers', times: 'Times', exams: 'Exams', invigilators: 'Invigilators' }
 
   return (
     <div className="space-y-4">
@@ -98,7 +100,7 @@ export function TeachingPage() {
         {TABS.map((t) => (
           <button key={t} onClick={() => setParam('tab', t === 'units' ? null : t)}
             className={clsx('rounded-full px-3 py-1 text-sm', tab === t ? 'bg-brand text-white' : 'border border-line bg-card')}>
-            {labels[t]}{t === 'exams' ? '' : ` (${counts[t]})`}
+            {labels[t]}{t === 'exams' || t === 'invigilators' ? '' : ` (${counts[t]})`}
           </button>
         ))}
       </div>
@@ -108,6 +110,7 @@ export function TeachingPage() {
       {tab === 'lecturers' && <LecturersTab code={code} board={data} />}
       {tab === 'times' && <TimesTab board={data} />}
       {tab === 'exams' && <ExamsTab code={code} term={term} />}
+      {tab === 'invigilators' && <InvigilatorsTab code={code} term={term} />}
       <p className="text-xs text-muted"><Link to="/" className="text-brand-ink">All departments</Link></p>
     </div>
   )

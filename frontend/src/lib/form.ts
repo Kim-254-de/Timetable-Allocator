@@ -98,6 +98,7 @@ export interface FormLecturer {
   phone: string
   email: string
   max_weekly_hours: number | null
+  max_exam_duties: number | null
   active: boolean
 }
 
@@ -434,3 +435,55 @@ export const letterUrl = (code: string, format: 'docx' | 'pdf', term: string | u
   const q = new URLSearchParams({ moderator, date, ...(term ? { term } : {}) })
   return `${import.meta.env.VITE_API_URL ?? '/api'}/teaching/${dept(code)}/moderation-letter.${format}?${q}`
 }
+
+export interface InvigilationRow {
+  paper_id: string
+  codes: string
+  title: string
+  date: string | null
+  session: number | null
+  start_time: string | null
+  end_time: string | null
+  rooms: string[]
+  invigilator_id: string | null
+  invigilator: string | null
+  invigilator_department: string | null
+}
+
+export interface InvigilatorChoice {
+  id: string
+  display: string
+  department_code: string
+  staff_number: string | null
+  duties: number
+  max_exam_duties: number | null
+  own: boolean
+}
+
+export interface InvigilationBoard {
+  term: GeneratorTerm
+  department: { code: string; name: string }
+  role: DepartmentRoleName | null
+  draft: { id: string; name: string; shared_at: string | null; status: string } | null
+  can_edit: boolean
+  can_publish: boolean
+  publication: Publication | null
+  published: boolean
+  papers: InvigilationRow[]
+  lecturers: InvigilatorChoice[]
+  problems: Problem[]
+}
+
+export const useInvigilationBoard = (code: string, term: string | undefined) =>
+  useQuery({
+    queryKey: ['teaching', code, term, 'invigilators'],
+    queryFn: () => get<InvigilationBoard>(at(code, '/invigilators'), params(term)),
+  })
+
+export const useSetInvigilator = (code: string, term: string | undefined) =>
+  useFormMutation(({ paperId, lecturerId }: { paperId: string; lecturerId: string | null }) =>
+    api.put(at(code, `/invigilators/${paperId}`), { lecturer_id: lecturerId }, { params: params(term) }).then((r) => r.data))
+
+export const usePublishInvigilators = (code: string, term: string | undefined) =>
+  useFormMutation((action: 'publish' | 'reopen') =>
+    api.post<InvigilationBoard>(at(code, `/invigilators/${action}`), null, { params: params(term) }).then((r) => r.data))

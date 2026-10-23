@@ -143,6 +143,7 @@ class LecturerBody(_Strict):
     phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] = ""
     email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] = ""
     max_weekly_hours: Annotated[int, Field(ge=1, le=60)] | None = None
+    max_exam_duties: Annotated[int, Field(ge=1, le=100)] | None = None
     active: bool = True
 
 
@@ -154,6 +155,7 @@ class LecturerPatch(_Strict):
     phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None
     email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
     max_weekly_hours: Annotated[int, Field(ge=0, le=60)] | None = None
+    max_exam_duties: Annotated[int, Field(ge=0, le=100)] | None = None
     active: bool | None = None
 
 
@@ -194,7 +196,6 @@ class PracticalBody(_Strict):
 
 
 class InvigilatorBody(_Strict):
-    """Who invigilates a paper in one of its rooms; null clears it."""
+    """Who invigilates the paper (any department's lecturer, by id); null clears it."""
 
-    room: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
     lecturer_id: Id | None

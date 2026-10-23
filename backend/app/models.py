@@ -215,6 +215,8 @@ class Lecturer(Base):
     phone: Mapped[str] = mapped_column(String(40), default="")
     email: Mapped[str] = mapped_column(String(255), default="")
     max_weekly_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Invigilation duties this lecturer can take in an exam period (all departments); None: no limit.
+    max_exam_duties: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
