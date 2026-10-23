@@ -1,56 +1,80 @@
 # Timetable Allocator
 
-Tharaka University's lecturer allocation system. After the Directorate of
-Examinations and Timetabling publishes the teaching timetable, each
-department's Chair of Department (COD) and allocation staff assign a lecturer
-to every class their department owns, including classes taught to other
-departments' students ("servicing"). It replaces the Word allocation form.
+Tharaka University's teaching entry system. Each department's Chair of
+Department (COD) and allocation staff enter what the department teaches in a
+term, with a lecturer for every class, and publish it to the Directorate of
+Examinations and Timetabling, whose **Timetable Generator** then gives every
+class its day, time and room. It replaces the Word allocation form.
 
-## The allocation form (start here)
+## A department's teaching (start here)
 
-Each department signs in and opens **Course allocation**. The units and groups
-come from the **Timetable Generator** (where the Director's office enters
-them), read from its `/api/integrations/allocator/` endpoints with
-`GENERATOR_API_KEY`. For every unit, or every group of a split unit, the
-department picks a lecturer and fills in L, P and CF, as on the Word form:
+Terms come from the Timetable Generator (the Director opens them there), read
+with `GENERATOR_API_KEY`. Each department opens its page and enters:
 
-- **Lecturers**: each department keeps its own list (title, name, staff
-  number, FT/PT, phone, email, weekly hour limit). The staff number is what
-  recognises the same person on another department's list (and in SMARTTT).
-  Lecturers can be added one at a time, inline while allocating, or pasted
-  from Excel.
-- **Units**: the department's units from the Generator, with their class rows
-  and, once the Director has published the timetable, their times and rooms.
-  Classes taught to another department's students are marked *servicing*. A
-  unit the timetable doesn't have yet can still be typed in; it is flagged.
-- **Checks**: once the timetable is published, a lecturer is refused for a
-  class at the same time as another of their classes, or over their weekly
-  hour limit.
-- **Paste from Excel / Word**: rows of Course code, Group, Course title, L, P,
-  CF, Lecturer ("Dr. Jane Otieno (PT)"); new lecturers are added to the list.
-- **Submit**: the COD submits, which locks the form until the COD reopens it.
+- **Courses**: programme, year, semester, optional sub-class and number of
+  students (`BSC.COMP SCI Y1S1, 120 students`). Each becomes a class row on
+  the timetable. A cohort is entered once, by its department.
+- **Units**: code, title, hours per week, class length, room type (lecture
+  hall, lab, seminar room) and the courses that take it. **Servicing**: a unit
+  taught to another department's students is entered by the department that
+  owns the unit, which picks their course from the shared list (every
+  department reads every course; only its department changes it). A unit code
+  is entered once per term, so nothing is timetabled twice.
+- **Groups**: a unit is one whole class until the department splits it into
+  groups A, B, C…; each group has its courses, the students of a course split
+  between groups, its **lecturer** and the form's L, P and CF hours.
+- **Lecturers**: the department's own list (title, name, staff number, FT/PT,
+  phone, email, weekly hour limit). The staff number is how the same person is
+  known on another department's list, by the Generator's solver and by SMARTTT,
+  so a lecturer given a group needs one.
+- **Paste from Excel** on every tab, with the workbook's tabs: Courses,
+  Units, Groups and lecturers, Lecturers (templates downloadable on each).
+- **Before publishing**: every unit has a group and every group a lecturer
+  with a staff number; a course split between groups adds up to its students;
+  no lecturer goes over their weekly hours, counted across every department.
+  There is no clash check here: times don't exist until the Generator solves.
+- **Publish** (COD only): sends the list to the Director and locks it until
+  the COD **reopens** it. A unit changed after publishing is marked "changed
+  since published" until it is published again.
+- **Times**: once the Director publishes the timetable, each group's day,
+  time and room shows on the page and on the downloads.
 - **Download**: PDF, Word or Excel in the allocation form layout: one table
-  per class row with a TOTAL row, "Servicing for other departments", and
-  "Prepared by". Phone numbers appear only on this, the department's own download.
-- **All departments**: the Directorate sees every department's progress.
-- **Publish**: the COD's **Submit & publish** sends the allocation to SMARTTT
-  (lecturers matched by staff number, which is required), so it reaches each
-  lecturer's timetable in the app and Smart Attendance. Saving only changes the
-  form here; SMARTTT gets changes when the form is submitted again. It needs
-  the Director's approved timetable in SMARTTT first. SMARTTT re-checks clashes
-  across every department: a class it refuses, or can't be reached for, shows
-  "Not in SMARTTT" and why, and **Publish again** retries. Classes never
-  allocated here are left as SMARTTT has them. SMARTTT's own timetable upload
-  and allocation pages are the fallback for when the Generator or the
-  Allocator can't be used.
+  per class row with a TOTAL row, "Servicing for other departments", the day,
+  time and room once published, and "Prepared by". Phone numbers appear only
+  on this, the department's own download.
+- **All departments**: the Directorate sees every department, read-only, and
+  which have published.
 
-API: `GET /api/generator/terms`, `GET /api/form/progress`,
-`GET /api/form/{dept}`, `PUT /api/form/{dept}/entries`,
-`POST /api/form/{dept}/entries/bulk`, `DELETE /api/form/{dept}/entries/{id}`,
-`POST /api/form/{dept}/submit|reopen|publish-again`, `GET /api/form/{dept}/export.pdf|docx|xlsx`,
-`/api/form/{dept}/lecturers[/bulk|/{id}]`. `{dept}` is the department's code
-in the Generator (e.g. `DCOMP`); a signed-in person belongs to it when SMARTTT
-lists them under a department with the same SMARTTT id, code or name.
+Lecturers reach SMARTTT through the Generator's publish (by staff number);
+the Allocator no longer sends anything to SMARTTT.
+
+API: `GET /api/generator/terms`, `GET /api/teaching/progress`,
+`GET /api/teaching/{dept}`, `/api/teaching/{dept}/courses[/bulk|/{id}]`,
+`/api/teaching/{dept}/units[/bulk|/{id}]`, `PUT /api/teaching/{dept}/units/{id}/groups`,
+`PATCH /api/teaching/{dept}/groups/{id}`, `POST /api/teaching/{dept}/groups/bulk`,
+`POST /api/teaching/{dept}/publish|reopen`, `GET /api/teaching/{dept}/export.pdf|docx|xlsx`,
+`/api/teaching/{dept}/lecturers[/bulk|/{id}]`. `{dept}` is the department's
+code (e.g. `CS`); a signed-in person belongs to it when SMARTTT lists them
+under a department with that code.
+
+For the Generator: `GET /api/integrations/generator/terms/{term}/submissions`
+(`X-API-Key` = `GENERATOR_INBOUND_KEY`; refused when unset) returns each
+published department's courses, units and groups (members, students,
+lecturer by staff number and name, publish time) and the departments that
+haven't published, with what changed in those that reopened.
+
+## Needs from SMARTTT
+
+Not built in these two repos; SMARTTT needs these for the department-first flow:
+
+- **Accept lecturers on publish**: `generator/publish/` takes
+  `lecturer_staff_number` (and `lecturer_name`) per session, and refuses the
+  publish naming the staff numbers it doesn't know.
+- **Add lecturers it doesn't know**: a way to create them (staff number, name,
+  department, FT/PT), so a department's new lecturer can be published.
+- **Match by code**: units, rooms and programmes are now typed in by
+  departments and the Director, so SMARTTT matches them by code (`unit_code`,
+  `room_code`, programme code and year/semester), not by SMARTTT ids.
 
 ## The earlier SMARTTT board
 
@@ -116,7 +140,7 @@ Backend (Python 3.12):
 cd backend
 python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_*, GENERATOR_BASE_URL, GENERATOR_API_KEY,
+cp ../.env.example .env                           # set DATABASE_URL, SMARTTT_*, GENERATOR_BASE_URL, GENERATOR_API_KEY, GENERATOR_INBOUND_KEY,
                                                   # ENVIRONMENT=development, COOKIE_SECURE=false
 alembic upgrade head
 uvicorn app.main:app --port 8001 --reload
@@ -134,7 +158,7 @@ On a Linux server with Docker and the Compose plugin:
 
 ```bash
 cp .env.example .env     # fill in POSTGRES_PASSWORD, SMARTTT_*, GENERATOR_BASE_URL,
-                         # GENERATOR_API_KEY
+                         # GENERATOR_API_KEY, GENERATOR_INBOUND_KEY
 docker compose up -d --build
 ```
 
