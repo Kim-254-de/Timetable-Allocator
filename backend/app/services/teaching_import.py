@@ -81,6 +81,26 @@ def _hours(value: str | None, what: str) -> float | None:
     return number
 
 
+MODE_WORDS = {
+    "regular": "regular",
+    "fulltime": "regular",
+    "odel": "odel",
+    "odl": "odel",
+    "distance": "odel",
+    "weekend": "weekend",
+    "evening": "evening",
+    "schoolbased": "school_based",
+    "parttime": "part_time",
+}
+
+
+def _mode(value: str | None) -> str:
+    word = "".join(ch for ch in (value or "regular").lower() if ch.isalpha())
+    if word not in MODE_WORDS:
+        raise ValueError(f"mode '{value}' must be Regular, ODEL, Weekend, Evening, School-based or Part-time")
+    return MODE_WORDS[word]
+
+
 def _list(value: str | None) -> list[str]:
     return [part.strip() for part in re.split(r"[;,\n]+", value or "") if part.strip()]
 
@@ -121,6 +141,7 @@ def bulk_courses(db: Session, identity: Identity, ctx: Context, rows: list[dict[
                 .strip()
                 .upper()[:10],
                 "students": _int(r.get("students"), "Students", 1, 5000),
+                "mode": _mode(r.get("mode")),
             }
             if not fields["programme"]:
                 raise ValueError("Programme is required")
@@ -139,7 +160,12 @@ def bulk_courses(db: Session, identity: Identity, ctx: Context, rows: list[dict[
             )
             if existing is not None and existing.department_code == ctx.code:
                 update_course(
-                    db, identity, ctx, str(existing.id), {"students": fields["students"]}, commit=False
+                    db,
+                    identity,
+                    ctx,
+                    str(existing.id),
+                    {"students": fields["students"], "mode": fields["mode"]},
+                    commit=False,
                 )
                 updated += 1
             else:
@@ -274,14 +300,14 @@ def bulk_groups(db: Session, identity: Identity, ctx: Context, rows: list[dict[s
             by_label = _courses_by_label(db, ctx)
             continue
         db.commit()
-    added = f"; {lecturers_added} lecturers added to your list" if lecturers_added else ""
+    extra = f"; {lecturers_added} lecturers added to your list" if lecturers_added else ""
     return {
         "created": groups_done,
         "updated": 0,
         "units": units_done,
         "groups": groups_done,
         "lecturers_added": lecturers_added,
-        "message": f"Groups set for {units_done} units ({groups_done} groups){added}.",
+        "message": f"Groups set for {units_done} units ({groups_done} groups){extra}.",
         **_errors(errors),
     }
 

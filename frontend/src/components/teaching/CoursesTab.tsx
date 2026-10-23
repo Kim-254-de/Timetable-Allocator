@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { BulkPaste, type BulkColumn } from '@/components/BulkPaste'
 import { Dialog, Field, inputClass } from '@/components/Dialog'
 import { errorMessage } from '@/lib/api'
-import { useBulk, useDeleteCourse, useSaveCourse, type CourseInput, type FormBoard, type OwnCourse } from '@/lib/form'
+import { COURSE_MODES, useBulk, useDeleteCourse, useSaveCourse, type CourseInput, type CourseMode, type FormBoard, type OwnCourse } from '@/lib/form'
 
 export const COURSE_COLUMNS: BulkColumn[] = [
   { key: 'programme', label: 'Programme', example: 'BSC.COMP SCI', required: true },
@@ -10,6 +10,7 @@ export const COURSE_COLUMNS: BulkColumn[] = [
   { key: 'semester', label: 'Semester', example: '1', required: true },
   { key: 'sub_class', label: 'Sub-class', example: '', hint: 'Only when a year is taught as separate classes (A, B…).' },
   { key: 'students', label: 'Students', example: '120', required: true },
+  { key: 'mode', label: 'Mode', example: 'Regular', hint: 'Regular, ODEL, Weekend, Evening, School-based or Part-time. ODEL students sit exams in a room of their own.' },
 ]
 
 /**
@@ -39,7 +40,7 @@ export function CoursesTab({ code, term, board }: { code: string; term: string |
         <table className="w-full text-left text-sm">
           <thead className="bg-surface text-xs uppercase text-muted">
             <tr>
-              <th className="px-3 py-2">Course</th><th className="px-3 py-2">Students</th>
+              <th className="px-3 py-2">Course</th><th className="px-3 py-2">Students</th><th className="px-3 py-2">Mode</th>
               <th className="px-3 py-2">Units taking it</th><th />
             </tr>
           </thead>
@@ -48,6 +49,7 @@ export function CoursesTab({ code, term, board }: { code: string; term: string |
               <tr key={c.id} className="border-t border-line">
                 <td className="px-3 py-2 font-medium">{c.label}</td>
                 <td className="px-3 py-2">{c.students}</td>
+                <td className="px-3 py-2">{COURSE_MODES[c.mode]}</td>
                 <td className="px-3 py-2 text-xs text-muted">{c.used_by.join(', ') || 'None yet'}</td>
                 <td className="space-x-3 px-3 py-2 text-right whitespace-nowrap">
                   {editable && <button onClick={() => setEditing(c)} className="text-brand-ink">Edit</button>}
@@ -58,7 +60,7 @@ export function CoursesTab({ code, term, board }: { code: string; term: string |
               </tr>
             ))}
             {board.courses.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-muted">
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">
                 No courses yet. Add each programme, year and semester you teach this term, with its number of students.
               </td></tr>
             )}
@@ -106,6 +108,7 @@ function CourseForm({ code, term, course, onClose }: {
     semester: course?.semester ?? 1,
     sub_class: course?.sub_class ?? '',
     students: course?.students ?? 0,
+    mode: course?.mode ?? 'regular',
   })
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -131,6 +134,11 @@ function CourseForm({ code, term, course, onClose }: {
             <input required type="number" min={1} max={5000} value={form.students || ''} onChange={(e) => setForm({ ...form, students: Number(e.target.value) })} className={inputClass} />
           </Field>
         </div>
+        <Field label="Mode" hint="ODEL students sit their exams in a room of their own.">
+          <select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as CourseMode })} className={inputClass}>
+            {Object.entries(COURSE_MODES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </Field>
         {save.isError && <p role="alert" className="text-sm text-danger">{errorMessage(save.error)}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md border border-line px-3 py-2 text-sm">Cancel</button>

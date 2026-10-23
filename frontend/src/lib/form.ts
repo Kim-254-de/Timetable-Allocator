@@ -40,6 +40,7 @@ export interface Course {
   sub_class: string
   label: string
   students: number
+  mode: CourseMode
 }
 
 export interface OwnCourse extends Course {
@@ -166,6 +167,7 @@ export interface CourseInput {
   semester: number
   sub_class: string
   students: number
+  mode: CourseMode
 }
 
 export interface UnitInput {
@@ -309,4 +311,126 @@ export function splitTyped(typed: string): Pick<LecturerInput, 'title' | 'full_n
     full_name: text.replace(TITLE, '').trim(),
     employment_type: kind?.[1].toLowerCase() === 'pt' ? 'part_time' : 'full_time',
   }
+}
+
+// -- exams --------------------------------------------------------------------------------------
+
+export type CourseMode = 'regular' | 'odel' | 'weekend' | 'evening' | 'school_based' | 'part_time'
+
+export const COURSE_MODES: Record<CourseMode, string> = {
+  regular: 'Regular',
+  odel: 'ODEL',
+  weekend: 'Weekend',
+  evening: 'Evening',
+  school_based: 'School-based',
+  part_time: 'Part-time',
+}
+
+export interface ExamPaper {
+  id: string
+  department_code: string
+  codes: string
+  units: { id: string; code: string; department_code: string }[]
+  title: string
+  examiner_id: string | null
+  examiner: string | null
+  notes: string
+  class_rows: string[]
+  students: number
+  changed_since_published: boolean
+}
+
+export interface ExamUnit {
+  id: string
+  code: string
+  title: string
+  no_written_exam: boolean
+  paper_id: string | null
+  paper_codes: string | null
+  paper_department: string | null
+  default_examiner_id: string | null
+}
+
+export interface PracticalRow {
+  id: string
+  unit_id: string
+  unit_code: string
+  unit_title: string
+  date: string
+  start_time: string
+  end_time: string
+}
+
+export interface ExamBoard {
+  term: GeneratorTerm
+  department: { code: string; name: string }
+  role: DepartmentRoleName | null
+  can_edit: boolean
+  can_publish: boolean
+  publication: Publication | null
+  published: boolean
+  papers: ExamPaper[]
+  units: ExamUnit[]
+  other_units: { id: string; code: string; title: string; department_code: string }[]
+  practicals: PracticalRow[]
+  lecturers: { id: string; display: string; staff_number: string | null; active: boolean }[]
+  problems: Problem[]
+  summary: { papers: number; students: number; changed: number; problems: number }
+}
+
+export interface PaperInput {
+  unit_ids: string[]
+  title: string
+  examiner_id: string | null
+  notes: string
+}
+
+export interface PracticalInput {
+  unit_id: string
+  date: string
+  start_time: string
+  end_time: string
+}
+
+export const useExamBoard = (code: string, term: string | undefined) =>
+  useQuery({ queryKey: ['teaching', code, term, 'exams'], queryFn: () => get<ExamBoard>(at(code, '/exams'), params(term)) })
+
+export const useSavePaper = (code: string, term: string | undefined) =>
+  useFormMutation(({ id, body }: { id?: string; body: Partial<PaperInput> }) =>
+    (id
+      ? api.patch<{ id: string }>(at(code, `/exam-papers/${id}`), body, { params: params(term) })
+      : api.post<{ id: string }>(at(code, '/exam-papers'), body, { params: params(term) })
+    ).then((r) => r.data))
+
+export const useDeletePaper = (code: string, term: string | undefined) =>
+  useFormMutation((id: string) => api.delete(at(code, `/exam-papers/${id}`), { params: params(term) }).then(() => null))
+
+export const usePapersFromUnits = (code: string, term: string | undefined) =>
+  useFormMutation(() => api.post<{ created: number }>(at(code, '/exam-papers/from-units'), null, { params: params(term) }).then((r) => r.data))
+
+export const useNoWrittenExam = (code: string, term: string | undefined) =>
+  useFormMutation(({ unitId, value }: { unitId: string; value: boolean }) =>
+    api.put(at(code, `/units/${unitId}/no-written-exam`), { no_written_exam: value }, { params: params(term) }).then(() => null))
+
+export const useSavePractical = (code: string, term: string | undefined) =>
+  useFormMutation(({ id, body }: { id?: string; body: PracticalInput }) =>
+    (id
+      ? api.put(at(code, `/practicals/${id}`), body, { params: params(term) })
+      : api.post(at(code, '/practicals'), body, { params: params(term) })
+    ).then((r) => r.data))
+
+export const useDeletePractical = (code: string, term: string | undefined) =>
+  useFormMutation((id: string) => api.delete(at(code, `/practicals/${id}`), { params: params(term) }).then(() => null))
+
+export const useExamBulk = (code: string, term: string | undefined, what: 'exam-papers' | 'practicals') =>
+  useFormMutation((rows: Record<string, string>[]) =>
+    api.post<BulkResult>(at(code, `/${what}/bulk`), { rows }, { params: params(term) }).then((r) => r.data))
+
+export const usePublishExams = (code: string, term: string | undefined) =>
+  useFormMutation((action: 'publish' | 'reopen') =>
+    api.post<ExamBoard>(at(code, `/exams/${action}`), null, { params: params(term) }).then((r) => r.data))
+
+export const letterUrl = (code: string, format: 'docx' | 'pdf', term: string | undefined, moderator: string, date: string) => {
+  const q = new URLSearchParams({ moderator, date, ...(term ? { term } : {}) })
+  return `${import.meta.env.VITE_API_URL ?? '/api'}/teaching/${dept(code)}/moderation-letter.${format}?${q}`
 }

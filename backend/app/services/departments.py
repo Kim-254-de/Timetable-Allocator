@@ -103,13 +103,16 @@ def require_cod(ctx: Context) -> None:
         raise ApiError(403, "FORBIDDEN", "Only the Chair of Department can publish or reopen.")
 
 
-def current_publication(db: Session, term_id: str, department_code: str) -> DepartmentPublication | None:
-    """The department's publication that stands (not reopened), if any."""
+def current_publication(
+    db: Session, term_id: str, department_code: str, kind: str = "teaching"
+) -> DepartmentPublication | None:
+    """The department's publication of this kind that stands (not reopened), if any."""
     return db.scalar(
         select(DepartmentPublication)
         .where(
             DepartmentPublication.generator_term_id == term_id,
             DepartmentPublication.department_code == department_code,
+            DepartmentPublication.kind == kind,
             DepartmentPublication.reopened_at.is_(None),
         )
         .order_by(DepartmentPublication.published_at.desc())
@@ -117,23 +120,29 @@ def current_publication(db: Session, term_id: str, department_code: str) -> Depa
     )
 
 
-def last_publication(db: Session, term_id: str, department_code: str) -> DepartmentPublication | None:
-    """The department's latest publication, standing or reopened."""
+def last_publication(
+    db: Session, term_id: str, department_code: str, kind: str = "teaching"
+) -> DepartmentPublication | None:
+    """The department's latest publication of this kind, standing or reopened."""
     return db.scalar(
         select(DepartmentPublication)
         .where(
             DepartmentPublication.generator_term_id == term_id,
             DepartmentPublication.department_code == department_code,
+            DepartmentPublication.kind == kind,
         )
         .order_by(DepartmentPublication.published_at.desc())
         .limit(1)
     )
 
 
-def require_open(db: Session, ctx: Context) -> None:
-    if current_publication(db, ctx.term_id, ctx.code) is not None:
+WHAT = {"teaching": "teaching list", "exams": "exam paper list", "invigilators": "invigilator list"}
+
+
+def require_open(db: Session, ctx: Context, kind: str = "teaching") -> None:
+    if current_publication(db, ctx.term_id, ctx.code, kind) is not None:
         raise ApiError(
             409,
             "PUBLISHED",
-            "This department's list has been published. The COD must reopen it before it can change.",
+            f"This department's {WHAT[kind]} has been published. The COD must reopen it to change it.",
         )

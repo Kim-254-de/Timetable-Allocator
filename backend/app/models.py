@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -244,6 +245,8 @@ class Course(Base):
     semester: Mapped[int] = mapped_column(Integer)
     sub_class: Mapped[str] = mapped_column(String(10), default="")
     students: Mapped[int] = mapped_column(Integer)
+    # How the cohort studies; ODEL students sit their exams in a room of their own.
+    mode: Mapped[str] = mapped_column(String(20), default="regular")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -342,15 +345,16 @@ class UnitGroupMember(Base):
 
 class DepartmentPublication(Base):
     """
-    A COD publishing their department's teaching for a term to the Director.
-    While it stands (not reopened) the department's courses, units and groups
-    are locked; the COD reopens it to change them.
+    A COD publishing their department's list for a term to the Director:
+    its teaching, its exam papers or its invigilators (`kind`). While it
+    stands (not reopened) that list is locked; the COD reopens it to change it.
     """
 
     __tablename__ = "department_publications"
     __table_args__ = (Index("ix_department_publication", "generator_term_id", "department_code"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20), default="teaching")  # teaching | exams | invigilators
     generator_term_id: Mapped[str] = mapped_column(String(64))
     department_code: Mapped[str] = mapped_column(String(32))
     department_name: Mapped[str] = mapped_column(String(255))
@@ -361,3 +365,89 @@ class DepartmentPublication(Base):
     group_count: Mapped[int] = mapped_column(Integer)
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reopened_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+# -- exams ------------------------------------------------------------------------------
+
+
+class ExamPaper(Base):
+    """
+    One written exam paper a department sets this term. All groups of a unit
+    sit one paper, and one paper can carry several units' codes
+    ("BITE 131/COSC 130"); a unit is on at most one paper per term. The
+    department entering a paper owns at least one of its units.
+    """
+
+    __tablename__ = "exam_papers"
+    __table_args__ = (Index("ix_exam_paper_department", "generator_term_id", "department_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generator_term_id: Mapped[str] = mapped_column(String(64))
+    department_code: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(255))
+    examiner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    notes: Mapped[str] = mapped_column(String(500), default="")
+    published_signature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    units: Mapped[list[ExamPaperUnit]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    examiner: Mapped[Lecturer | None] = relationship(lazy="joined")
+
+
+class ExamPaperUnit(Base):
+    """A unit sat on a paper; unique per unit, so no unit is examined twice."""
+
+    __tablename__ = "exam_paper_units"
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("exam_papers.id", ondelete="CASCADE"), primary_key=True
+    )
+    unit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"), primary_key=True, unique=True, index=True
+    )
+
+
+class NoWrittenExam(Base):
+    """A unit the department marked as having no written exam this term (project, practical only...)."""
+
+    __tablename__ = "no_written_exams"
+
+    unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True)
+
+
+class Practical(Base):
+    """A practical exam on a date the department sets; the Generator only shows it on the timetable."""
+
+    __tablename__ = "practicals"
+    __table_args__ = (Index("ix_practical_department", "generator_term_id", "department_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generator_term_id: Mapped[str] = mapped_column(String(64))
+    department_code: Mapped[str] = mapped_column(String(32))
+    unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date)
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+
+
+class Invigilation(Base):
+    """
+    Who invigilates a paper in a room of the Director's shared exam draft.
+    `paper_ref` is the paper's id here; `room` the room's code there.
+    """
+
+    __tablename__ = "invigilations"
+    __table_args__ = (UniqueConstraint("paper_id", "room", name="uq_invigilation_paper_room"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    paper_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("exam_papers.id", ondelete="CASCADE"), index=True)
+    room: Mapped[str] = mapped_column(String(30))
+    lecturer_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("lecturers.id", ondelete="RESTRICT"), index=True
+    )
+    entered_by_name: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    lecturer: Mapped[Lecturer] = relationship(lazy="joined")

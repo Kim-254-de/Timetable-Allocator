@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import date
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
@@ -22,6 +23,10 @@ from app.api.schemas import (
     LecturerBody,
     LecturerPatch,
     LoginBody,
+    NoWrittenExamBody,
+    PaperBody,
+    PaperPatch,
+    PracticalBody,
     UnitBody,
     UnitPatch,
 )
@@ -34,6 +39,8 @@ from app.errors import ApiError, ok
 from app.services import (
     allocation,
     availability,
+    exam_import,
+    exams,
     export,
     form_export,
     lecturers,
@@ -44,6 +51,7 @@ from app.services import (
 from app.services import (
     departments as access,
 )
+from app.services import moderation_letter as moderation_letter_service
 
 router = APIRouter()
 
@@ -460,6 +468,199 @@ def teaching_export(
     )
 
 
+# -- exams: papers, practicals, the moderation letter -------------------------------------------
+
+
+@router.get("/teaching/{department}/exams")
+def exam_board(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(exams.board(db, generator, smarttt, identity, department, term))
+
+
+@router.post("/teaching/{department}/exam-papers")
+def add_paper(
+    department: DeptCode,
+    body: PaperBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok({"id": str(exams.create_paper(db, identity, ctx, body.model_dump()).id)})
+
+
+@router.post("/teaching/{department}/exam-papers/from-units")
+def papers_from_units(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(exams.start_from_units(db, identity, _ctx(identity, generator, smarttt, department, term)))
+
+
+@router.post("/teaching/{department}/exam-papers/bulk")
+def bulk_papers(
+    department: DeptCode,
+    body: BulkBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok(exam_import.bulk_papers(db, identity, ctx, body.rows))
+
+
+@router.patch("/teaching/{department}/exam-papers/{paper_id}")
+def change_paper(
+    department: DeptCode,
+    paper_id: ItemId,
+    body: PaperPatch,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    paper = exams.update_paper(db, identity, ctx, paper_id, body.model_dump(exclude_unset=True))
+    return ok({"id": str(paper.id)})
+
+
+@router.delete("/teaching/{department}/exam-papers/{paper_id}")
+def remove_paper(
+    department: DeptCode,
+    paper_id: ItemId,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    exams.delete_paper(db, identity, _ctx(identity, generator, smarttt, department, term), paper_id)
+    return ok(None)
+
+
+@router.put("/teaching/{department}/units/{unit_id}/no-written-exam")
+def no_written_exam(
+    department: DeptCode,
+    unit_id: ItemId,
+    body: NoWrittenExamBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    exams.set_no_written_exam(db, identity, ctx, unit_id, body.no_written_exam)
+    return ok(None)
+
+
+@router.post("/teaching/{department}/practicals")
+def add_practical(
+    department: DeptCode,
+    body: PracticalBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok({"id": str(exams.save_practical(db, identity, ctx, None, body.model_dump()).id)})
+
+
+@router.post("/teaching/{department}/practicals/bulk")
+def bulk_practicals(
+    department: DeptCode,
+    body: BulkBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok(exam_import.bulk_practicals(db, identity, ctx, body.rows))
+
+
+@router.put("/teaching/{department}/practicals/{practical_id}")
+def change_practical(
+    department: DeptCode,
+    practical_id: ItemId,
+    body: PracticalBody,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    ctx = _ctx(identity, generator, smarttt, department, term)
+    return ok({"id": str(exams.save_practical(db, identity, ctx, practical_id, body.model_dump()).id)})
+
+
+@router.delete("/teaching/{department}/practicals/{practical_id}")
+def remove_practical(
+    department: DeptCode,
+    practical_id: ItemId,
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+) -> dict[str, Any]:
+    exams.delete_practical(db, identity, _ctx(identity, generator, smarttt, department, term), practical_id)
+    return ok(None)
+
+
+@router.post("/teaching/{department}/exams/publish")
+def publish_exams(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(exams.publish(db, generator, smarttt, identity, department, term))
+
+
+@router.post("/teaching/{department}/exams/reopen")
+def reopen_exams(
+    department: DeptCode, identity: Me, db: Db, generator: Generator, smarttt: Smarttt, term: TermParam = None
+) -> dict[str, Any]:
+    return ok(exams.reopen(db, generator, smarttt, identity, department, term))
+
+
+@router.get("/teaching/{department}/moderation-letter.{fmt}")
+def moderation_letter(
+    department: DeptCode,
+    fmt: Literal["docx", "pdf"],
+    identity: Me,
+    db: Db,
+    generator: Generator,
+    smarttt: Smarttt,
+    term: TermParam = None,
+    moderator: Annotated[str, Query(max_length=1000)] = "",
+    letter_date: Annotated[str, Query(alias="date", max_length=40)] = "",
+) -> Response:
+    """The letter sent with the department's exam drafts. `moderator`: name and address, a line each."""
+    board = exams.board(db, generator, smarttt, identity, department, term)
+    letter = moderation_letter_service.Letter(
+        department=board["department"]["name"],
+        term=str(board["term"].get("name") or ""),
+        date=letter_date or date.today().strftime("%d %B %Y"),
+        moderator=[line.strip() for line in moderator.splitlines() if line.strip()]
+        or ["The External Moderator"],
+        papers=[(p["codes"], p["title"]) for p in board["papers"]],
+        cod=identity.full_name,
+    )
+    filename = f"moderation-letter-{access.compact(board['department']['code'])}.{fmt}"
+    return Response(
+        moderation_letter_service.BUILDERS[fmt](letter),
+        media_type=moderation_letter_service.MEDIA[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # -- each department's own lecturers ---------------------------------------------------------
 
 
@@ -543,3 +744,12 @@ def generator_submissions(
 ) -> dict[str, Any]:
     """What each department has published for the term, and which haven't, for the Director's import."""
     return ok(teaching.submissions(db, smarttt, term_id))
+
+
+@router.get(
+    "/integrations/generator/terms/{term_id}/exams",
+    dependencies=[Depends(require_generator_key)],
+)
+def generator_exams(term_id: Annotated[str, Path(max_length=64)], db: Db, smarttt: Smarttt) -> dict[str, Any]:
+    """Each department's published exam papers (with the class rows sitting them) and practicals."""
+    return ok(exams.submissions(db, smarttt, term_id))

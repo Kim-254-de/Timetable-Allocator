@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, time
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -60,6 +61,7 @@ Id = Annotated[str, StringConstraints(pattern=r"^[0-9a-fA-F-]{32,36}$")]
 Programme = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 SubClass = Annotated[str, StringConstraints(strip_whitespace=True, max_length=10)]
 RoomType = Literal["lecture_hall", "lab", "seminar"]
+CourseMode = Literal["regular", "odel", "weekend", "evening", "school_based", "part_time"]
 
 
 class CourseBody(_Strict):
@@ -70,6 +72,7 @@ class CourseBody(_Strict):
     semester: Annotated[int, Field(ge=1, le=3)]
     sub_class: SubClass = ""
     students: Annotated[int, Field(ge=1, le=5000)]
+    mode: CourseMode = "regular"
 
 
 class CoursePatch(_Strict):
@@ -78,6 +81,7 @@ class CoursePatch(_Strict):
     semester: Annotated[int, Field(ge=1, le=3)] | None = None
     sub_class: SubClass | None = None
     students: Annotated[int, Field(ge=1, le=5000)] | None = None
+    mode: CourseMode | None = None
 
 
 class UnitBody(_Strict):
@@ -157,3 +161,40 @@ class BulkBody(_Strict):
     """Rows pasted from Excel or Word, one dict per row, keyed by column heading."""
 
     rows: Annotated[list[dict[str, str | int | float | None]], Field(min_length=1, max_length=2000)]
+
+
+# -- exams ----------------------------------------------------------------------------------
+
+
+class PaperBody(_Strict):
+    """A written exam paper: one unit, or several sitting one shared paper ("BITE 131/COSC 130")."""
+
+    unit_ids: Annotated[list[Id], Field(min_length=1, max_length=10)]
+    title: Text = ""
+    examiner_id: Id | None = None
+    notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ""
+
+
+class PaperPatch(_Strict):
+    unit_ids: Annotated[list[Id], Field(min_length=1, max_length=10)] | None = None
+    title: Text | None = None
+    examiner_id: Id | None = None
+    notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+
+
+class NoWrittenExamBody(_Strict):
+    no_written_exam: bool
+
+
+class PracticalBody(_Strict):
+    unit_id: Id
+    date: date
+    start_time: time
+    end_time: time
+
+
+class InvigilatorBody(_Strict):
+    """Who invigilates a paper in one of its rooms; null clears it."""
+
+    room: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
+    lecturer_id: Id | None

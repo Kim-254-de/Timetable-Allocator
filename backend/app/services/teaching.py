@@ -107,6 +107,7 @@ def course_dict(c: Course) -> dict[str, Any]:
         "sub_class": c.sub_class,
         "label": c.label,
         "students": c.students,
+        "mode": c.mode,
     }
 
 
@@ -392,7 +393,7 @@ def _get_course(db: Session, ctx: Context, course_id: str) -> Course:
 def _apply_course(db: Session, ctx: Context, course: Course, fields: dict[str, Any]) -> None:
     """Checks everything first, so a refused change leaves the course as it was."""
     values: dict[str, Any] = {
-        k: getattr(course, k) for k in ("programme", "year", "semester", "sub_class", "students")
+        k: getattr(course, k) for k in ("programme", "year", "semester", "sub_class", "students", "mode")
     }
     for key in values:
         if fields.get(key) is not None:
@@ -422,7 +423,7 @@ def create_course(
 ) -> Course:
     require_enter(ctx)
     require_open(db, ctx)
-    course = Course(generator_term_id=ctx.term_id, department_code=ctx.code, sub_class="")
+    course = Course(generator_term_id=ctx.term_id, department_code=ctx.code, sub_class="", mode="regular")
     _apply_course(db, ctx, course, fields)
     db.add(course)
     db.flush()
@@ -863,7 +864,7 @@ def submissions(db: Session, smarttt: SmartttClient, term_id: str) -> dict[str, 
     latest: dict[str, DepartmentPublication] = {}
     for row in db.scalars(
         select(DepartmentPublication)
-        .where(DepartmentPublication.generator_term_id == term_id)
+        .where(DepartmentPublication.generator_term_id == term_id, DepartmentPublication.kind == "teaching")
         .order_by(DepartmentPublication.published_at)
     ):
         latest[row.department_code] = row
