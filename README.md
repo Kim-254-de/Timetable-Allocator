@@ -63,6 +63,34 @@ published department's courses, units and groups (members, students,
 lecturer by staff number and name, publish time) and the departments that
 haven't published, with what changed in those that reopened.
 
+## Exams (start of each exam period)
+
+On the department page:
+
+- **Exams** tab: the department's written exam papers, built from its units
+  ("A paper for each unit", then join codes for a shared paper such as
+  `BITE 131/COSC 130`, which may include another department's unit). All
+  groups of a unit sit one paper; a unit is on at most one paper per term, so
+  a code listed twice is refused. A unit can be marked "no written exam". The
+  examiner defaults to the unit's lecturer. **Practicals** are entered with
+  the date and time the department sets (shown on the timetable, never
+  moved). **Moderation letter** (Word, PDF) is generated from the paper list
+  with the external moderator's name and address. The COD **publishes the
+  papers** (separately from the teaching list) and can reopen them.
+- **Courses** get a **mode** (Regular, ODEL, Weekend, Evening, School-based,
+  Part-time); ODEL students sit their exams in a room of their own.
+- **Invigilators** tab, once the Director shares an exam draft: each paper's
+  date, session and rooms, and one invigilator per paper from any
+  department's list. Nobody (one staff number) is in two places in a session
+  or over their duty limit (set per lecturer); duties per lecturer are shown.
+  The COD publishes the invigilators. (An extra invigilator per extra room of
+  a multi-room paper is to be confirmed, A2.)
+
+For the Generator (`X-API-Key` = `GENERATOR_INBOUND_KEY`):
+`GET /api/integrations/generator/terms/{term}/exams` (published papers with
+the class rows sitting them, practicals) and
+`GET /api/integrations/generator/terms/{term}/invigilators`.
+
 ## Needs from SMARTTT
 
 Not built in these two repos; SMARTTT needs these for the department-first flow:
@@ -75,6 +103,24 @@ Not built in these two repos; SMARTTT needs these for the department-first flow:
 - **Match by code**: units, rooms and programmes are now typed in by
   departments and the Director, so SMARTTT matches them by code (`unit_code`,
   `room_code`, programme code and year/semester), not by SMARTTT ids.
+
+### Exams: needs from SMARTTT and Smart Attendance
+
+Not built in these two repos:
+
+- **SMARTTT**
+  - an exam publication endpoint taking the Generator's exam payload: per paper,
+    its codes, date, start and end, examiner, and seating
+    `[{room_code, class_row, part, parts, students, invigilator_staff_number}]`;
+    until it exists, exam versions are approved in the Generator and marked
+    "not yet in SMARTTT";
+  - an exam view per student (each paper's date, time and *their* room) and per
+    lecturer (papers they set, invigilation duties);
+  - pushing exam sessions to Smart Attendance;
+  - an *Exams* tab in the SMARTTT app, shown first during the exam period.
+- **Smart Attendance**: an *exam* session type, one per paper per room, opened
+  by its invigilator; students check in only to their own paper and room; a
+  sat/absent report per paper for the invigilator.
 
 ## The earlier SMARTTT board
 
